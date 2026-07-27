@@ -85,6 +85,13 @@ def run_5fold_cv(
     # Aggregate mean SHAP
     # =====================
     mean_shap = np.mean(mean_shap_list, axis=0)
+
+    # Handle SHAP multiclass output
+    # New SHAP RF/XGB format:
+    # (features, classes)
+    if len(mean_shap.shape) == 2:
+        mean_shap = mean_shap[:, 1]
+
     mean_shap_df = pd.DataFrame({
         "Feature": X.columns,
         f"MeanAbsSHAP_{model_name}": mean_shap
@@ -99,4 +106,4 @@ def run_5fold_cv(
         index=False
     )
 
-    print(f"[DONE] {model_name} 5fold CV finished - cross_validation.py:102")
+    print(f"[DONE] {model_name} 5fold CV finished - cross_validation.py:109")

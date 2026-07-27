@@ -1,217 +1,252 @@
-DILI / Toxicity Prediction Pipeline
+# AI-Toxicity-Predictor
 
-This repository contains a pipeline for drug-induced liver injury (DILI) and toxicity prediction using molecular fingerprints (ECFP) and machine learning models. The pipeline supports feature extraction, model training, cross-validation, SHAP explainability, and fragment visualization.
+## Explainable AI Framework for Drug-Induced Liver Injury (DILI) Prediction Using Molecular Fingerprints and Machine Learning
 
-Table of Contents
+---
 
-Features
+## Overview
 
-Installation
+Drug-induced liver injury (DILI) is one of the major causes of drug failure during clinical development and post-market withdrawal. Early identification of hepatotoxic compounds remains a critical challenge in drug discovery.
 
-Project Structure
+This project develops an **explainable machine learning framework** for predicting DILI toxicity from molecular structures and identifying chemical substructures associated with toxicity prediction.
 
-Data
+The framework integrates:
 
-Usage
+- Molecular representation using RDKit and ECFP fingerprints
+- Multiple machine learning models
+- Cross-validation evaluation
+- SHAP-based model interpretation
+- Chemical fragment visualization
 
-Pipeline Overview
+The goal is not only to predict toxicity risk, but also to provide **chemically interpretable explanations** for model decisions.
 
-Modeling
+---
 
-SHAP Explainability
+# Pipeline Overview
+Molecular Structure (SMILES)
+              |
+              v
+        RDKit Processing
+              |
+              v
+  ECFP Molecular Fingerprints
+              |
+              v
+ Machine Learning Classification
+ (Random Forest / XGBoost / Logistic Regression)
+              |
+              v
+     Cross-validation Evaluation
+              |
+              v
+        SHAP Explainability
+              |
+              v
+ Molecular Fragment Interpretation
+ 
+---
 
-Fragment Visualization
+# Features
 
-Results
+## Molecular Feature Extraction
 
-Requirements
+- Convert SMILES strings into molecular fingerprints using RDKit
+- Generate Extended Connectivity Fingerprints (ECFP)
+- Configurable fingerprint radius and bit length
 
-License
+Default configuration:
+ECFP radius = 3
+ECFP bits = 1024
+---
 
-Features
+## Machine Learning Models
 
-ECFP (Extended-Connectivity Fingerprints) feature extraction from SMILES.
+The framework supports multiple classification algorithms:
 
-Training with multiple ML models:
+| Model | Description |
+|---|---|
+| Random Forest | Non-linear ensemble classifier with SHAP interpretation |
+| XGBoost | Gradient boosting model for complex molecular patterns |
+| Logistic Regression | Interpretable baseline model |
 
-Random Forest (RF)
+---
 
-XGBoost (XGB)
+## Model Optimization
 
-Logistic Regression (LogReg)
+Hyperparameter optimization is performed using grid search.
 
-5-fold cross-validation with SHAP explainability.
+Examples:
 
-Extract top SHAP features and map them to molecular fragments.
+- Number of estimators
+- Tree depth
+- Learning rate
+- Regularization parameters
 
-Generate fragment images for top contributing ECFP bits.
+---
 
-Configurable for different fingerprint radius, bit length, and top fragments.
+## Cross-validation
 
-Installation
+Model performance is evaluated using:
 
-Clone the repository:
+- Stratified 5-fold cross-validation
+- ROC-AUC
+- F1-score
+- Precision
+- Recall
+- Confusion matrix
 
-cd dili_ml_project
+---
 
+# Explainable AI Interpretation
 
-Install dependencies:
+A major focus of this project is transforming machine learning predictions into chemically meaningful information.
 
-pip install -r requirements.txt
+Instead of treating models as black boxes, SHAP (SHapley Additive exPlanations) is applied to identify molecular features contributing to toxicity predictions.
 
+Workflow:
+SHAP Importance
+        |
+        v
+Important ECFP Bits
+        |
+        v
+RDKit Bit Mapping
+        |
+        v
+Chemical Fragment Visualization
+This enables identification of structural patterns potentially associated with hepatotoxicity.
 
-Note: RDKit is recommended to install via Conda for stability:
+---
 
-conda install -c conda-forge rdkit
-
-Project Structure
+# Project Structure
 dili_ml_project/
-│
-├─ data/                   # Input CSV datasets
-├─ results/                # Output from pipeline
-│   ├─ <dataset>/          # Dataset-specific folder
-│   │   ├─ RF/             # RF fold outputs
-│   │   ├─ XGB/            # XGB fold outputs
-│   │   ├─ LogReg/         # Logistic Regression fold outputs
-│   │   └─ fragments/      # Top SHAP fragments PNGs & TSV
-├─ feature_extraction/
-│   ├─ ecfp.py             # ECFP feature extraction
-│   └─ bit_mapping.py      # Map ECFP bits to fragments
-├─ models/
-│   ├─ train_rf.py
-│   ├─ train_xgb.py
-│   └─ train_logreg.py
-├─ evaluation/
-│   ├─ cross_validation.py
-│   └─ metrics.py
-├─ explain/
-│   ├─ shap_analysis.py
-│   └─ shap_to_fragments.py
-├─ preprocess/
-│   └─ clean_data.py
-├─ visualization/
-│   ├─ draw_fragments.py
-│   └─ plot_shap.py
-├─ model_selection/
-│   └─ grid_search.py
-├─ config.py
-├─ run_pipeline.py         # Main pipeline runner
-├─ requirements.txt
-└─ README.md
+├── data/
+│   └── raw molecular datasets
+├── features/
+│   ├── ecfp.py
+│   └── bit_mapping.py
+├── models/
+│   ├── train_rf.py
+│   ├── train_xgb.py
+│   └── train_logreg.py
+├── evaluation/
+│   ├── cross_validation.py
+│   └── metrics.py
+├── explain/
+│   ├── shap_analysis.py
+│   └── shap_to_fragments.py
+├── preprocess/
+│   └── clean_data.py
+├── visualization/
+│   ├── draw_fragments.py
+│   └── plot_shap.py
+├── model_selection/
+│   └── grid_search.py
+├── results/
+│   ├── model performance
+│   ├── SHAP results
+│   └── fragment visualization
+├── config.py
+├── run_pipeline.py
+├── requirements.txt
+└── README.md
+---
 
-Data
+# Dataset
 
-Place your CSV datasets in the data/ folder. Each CSV should contain at least:
+Input datasets should contain:
 
-SMILES column (molecule representation)
-
-label column (binary toxicity label)
-
-LabelCompoundName column (compound name, optional)
+| Column | Description |
+|---|---|
+| SMILES | Molecular representation |
+| label | Binary toxicity label |
+| LabelCompoundName | Compound name |
 
 Example:
 
-LabelCompoundName	SMILES	label
-Aspirin	CC(=O)OC1=CC	0
-Paracetamol	CC(=O)NC1=CC	1
+| LabelCompoundName | SMILES | label |
+|---|---|---|
+| Aspirin | CC(=O)OC1=CC | 0 |
+| Example compound | CCN1CCC | 1 |
+
+---
+
+# Installation
+
+## Clone repository
+
+```bash
+git clone https://github.com/OAO1211/AI-Toxicity-Predictor.git
+
+cd dili_ml_projectInstall dependencies
+pip install -r requirements.txt
+RDKit Installation
+RDKit is recommended to install through Conda:
+conda install -c conda-forge rdkit
 Usage
-
-Run the full pipeline:
-
-python run_pipeline.py --ecfp_radius 3 --ecfp_bits 1024 --top_shap_bits 20
-
-
-Parameters:
-
-ecfp_radius – radius for ECFP generation (default: 3)
-
-ecfp_bits – length of fingerprint vector (default: 1024)
-
-top_shap_bits – number of top SHAP bits to extract (default: 20)
-
-Pipeline Overview
-
-Feature Extraction: Convert SMILES to ECFP fingerprints (feature_extraction/ecfp.py).
-
-Data Loading: Encode categorical features and split X/y (preprocess/clean_data.py).
-
-Grid Search: Optimize hyperparameters for each model (model_selection/grid_search.py).
-
-5-Fold Cross-Validation: Train, validate, and compute SHAP values (evaluation/cross_validation.py).
-
-Fragment Extraction: Map top SHAP features back to molecular fragments (feature_extraction/bit_mapping.py).
-
-Visualization: Save fragment images and SHAP plots (visualization/).
-
-Modeling
-
-Supported models:
-
-Model	Description
-RF	Random Forest, class-balanced, SHAP stable
-XGB	XGBoost, tree-based, handles non-linear patterns
-LogReg	Logistic Regression, interpretable baseline
-
-Grid search is applied for hyperparameter tuning before cross-validation.
-
-SHAP Explainability
-
-Uses TreeExplainer for RF/XGB.
-
-Supports KernelExplainer for linear or other models.
-
-Computes mean absolute SHAP values per feature.
-
-Saves per-sample SHAP values as TSV files in each fold folder.
-
-Fragment Visualization
-
-Extract top N SHAP features (bits).
-
-Map bits to substructures using RDKit.
-
-Save fragment images in results/<dataset>/fragments/<model>/pngs/.
-
-Example folder structure:
-
-results/
-└─ acetaminophen/
-   ├─ RF/
-   ├─ XGB/
-   ├─ LogReg/
-   └─ fragments/
-      ├─ RF/pngs/
-      ├─ XGB/pngs/
-      └─ LogReg/pngs/
-
+Run the complete pipeline:
+python run_pipeline.py
+The pipeline will automatically perform:
+Molecular fingerprint generation
+Dataset loading
+Model training
+Hyperparameter optimization
+5-fold cross-validation
+SHAP calculation
+Fragment extraction
+Visualization generation
 Results
+After running the pipeline, the following outputs will be generated:
+Model Evaluation
+Examples:
+ROC-AUC
+F1-score
+Precision / Recall
+Confusion matrix
+SHAP Outputs
+Generated files:
+training_shap.tsv
 
-After running the pipeline, you will get:
+testing_shap.tsv
 
-training_shap.tsv and testing_shap.tsv per fold.
+mean_abs_shap.tsv
+Fragment Visualization
+Important molecular fragments identified by SHAP are converted back into chemical structures using RDKit.
+Example output:
+results/
 
-mean_abs_shap.tsv for aggregated SHAP values.
+└── fragments/
 
-Top fragments extracted and visualized as PNG images.
+    ├── RF/
 
-Pipeline logs in console.
+    ├── XGB/
 
+    └── LogReg/
+Future Development
+Future improvements include:
+Integration of molecular graph neural networks (GNN)
+Incorporation of physicochemical properties
+Integration of pharmacokinetic and ADMET features
+Larger DILI benchmark datasets
+Deployment as an interactive prediction platform
+Research Direction
+This project explores the intersection of:
+Artificial Intelligence
+Computational Chemistry
+Drug Discovery
+Explainable Machine Learning
+The long-term goal is to develop AI systems capable of assisting early-stage drug development by predicting molecular risks and providing interpretable chemical insights.
 Requirements
-
-Key Python packages:
-
+Main dependencies:
 numpy
 pandas
 scikit-learn
-rdkit-pypi
+rdkit
 xgboost
 shap
 matplotlib
 seaborn
-
-
-See requirements.txt for the complete list.
-
+openpyxl
+See requirements.txt for the complete environment.
 License
-
-MIT License. See LICENSE file for details.
+MIT License

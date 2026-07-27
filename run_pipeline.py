@@ -62,36 +62,42 @@ def run_pipeline(ecfp_radius=3, ecfp_bits=1024, top_shap_bits=20):
         os.makedirs(dataset_out, exist_ok=True)
 
         # ================= Step 3: Define experiments =================
+        # experiments = {
+        #     "RF": {
+        #         "builder": build_rf,
+        #         "grid_search": rf_grid_search,
+        #         "model_type": "rf"
+        #     },
+        #     "XGB": {
+        #         "builder": build_xgb,
+        #         "grid_search": xgb_grid_search,
+        #         "model_type": "xgb"
+        #     },
+        #     "LogReg": {
+        #         "builder": build_logreg,
+        #         "grid_search": logreg_grid_search,
+        #         "model_type": "logreg"
+        #     }
+        # }
         experiments = {
             "RF": {
                 "builder": build_rf,
                 "grid_search": rf_grid_search,
                 "model_type": "rf"
-            },
-            "XGB": {
-                "builder": build_xgb,
-                "grid_search": xgb_grid_search,
-                "model_type": "xgb"
-            },
-            "LogReg": {
-                "builder": build_logreg,
-                "grid_search": logreg_grid_search,
-                "model_type": "logreg"
             }
         }
-
         # ================= Step 4: Run models =================
         for model_name, cfg in experiments.items():
-            print(f"\n[MODEL] {model_name} - run_pipeline.py:85")
+            print(f"\n[MODEL] {model_name} - run_pipeline.py:91")
 
             # ---- 4.1 Grid search ----
-            print("[STEP 4.1] Grid search... - run_pipeline.py:88")
+            print("[STEP 4.1] Grid search... - run_pipeline.py:94")
             best_params, best_score = cfg["grid_search"](X, y)
-            print(f"[INFO] Best params: {best_params} - run_pipeline.py:90")
-            print(f"[INFO] Best CV score: {best_score:.4f} - run_pipeline.py:91")
+            print(f"[INFO] Best params: {best_params} - run_pipeline.py:96")
+            print(f"[INFO] Best CV score: {best_score:.4f} - run_pipeline.py:97")
 
             # ---- 4.2 5-fold CV + SHAP ----
-            print("[STEP 4.2] 5fold CV + SHAP... - run_pipeline.py:94")
+            print("[STEP 4.2] 5fold CV + SHAP... - run_pipeline.py:100")
             run_5fold_cv(
                 model_builder=lambda: cfg["builder"](**best_params),
                 ids=ids,
@@ -103,7 +109,7 @@ def run_pipeline(ecfp_radius=3, ecfp_bits=1024, top_shap_bits=20):
             )
 
             # ---- 4.3 Extract top SHAP fragments ----
-            print("[STEP 4.3] Extracting SHAP fragments... - run_pipeline.py:106")
+            print("[STEP 4.3] Extracting SHAP fragments... - run_pipeline.py:112")
             shap_path = os.path.join(dataset_out, model_name, "fold1", "training_shap.tsv")
             frag_out = os.path.join(dataset_out, "fragments", model_name)
             os.makedirs(frag_out, exist_ok=True)
@@ -117,7 +123,7 @@ def run_pipeline(ecfp_radius=3, ecfp_bits=1024, top_shap_bits=20):
                 n_bits=ecfp_bits
             )
 
-    print("\n[INFO] Pipeline finished successfully! - run_pipeline.py:120")
+    print("\n[INFO] Pipeline finished successfully! - run_pipeline.py:126")
 
 
 if __name__ == "__main__":

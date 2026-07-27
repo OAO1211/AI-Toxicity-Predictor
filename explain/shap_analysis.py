@@ -69,9 +69,23 @@ def save_shap_output(
     Save SHAP values with correct ECFP bit names
     """
 
-    df_shap = pd.DataFrame(shap_values, columns=feature_names)
+    # SHAP新版 RandomForest output:
+    # (samples, features, classes)
+    # 取 label=1 (toxicity class)
+    if len(shap_values.shape) == 3:
+        shap_values = shap_values[:, :, 1]
+
+    df_shap = pd.DataFrame(
+        shap_values,
+        columns=feature_names
+    )
+
     df_shap.insert(0, "SampleID", ids)
     df_shap.insert(1, "baseline_value", baseline)
     df_shap.insert(2, "prediction_prob", pred_prob)
 
-    df_shap.to_csv(out_path, sep="\t", index=False)
+    df_shap.to_csv(
+        out_path,
+        sep="\t",
+        index=False
+    )
