@@ -1,130 +1,401 @@
 # run_pipeline.py
-import sys
-import os
-from glob import glob
-import pandas as pd
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+import os
+import sys
+from glob import glob
+
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
 sys.path.append(BASE_DIR)
 
-# ===== Feature & data =====
+
+# =========================
+# Config
+# =========================
+
+from config import (
+    RAW_DATA_DIR,
+    FEATURE_DIR,
+    RESULTS_DIR,
+    LABEL_COL,
+    NAME_COL,
+    SMILES_COL,
+    ECFP_RADIUS,
+    ECFP_BITS,
+    TOP_SHAP_BITS,
+    MODEL_CONFIGS
+)
+
+
+# =========================
+# Feature extraction
+# =========================
+
 from features.ecfp import extract_ecfp_features
+
+
+# =========================
+# Data loading
+# =========================
+
 from data_loader import load_data
 
-# ===== Models =====
-from models.train_rf import build_rf
-from models.train_xgb import build_xgb
-from models.train_logreg import build_logreg
 
-# ===== Model selection =====
-from model_selection.grid_search import rf_grid_search, xgb_grid_search, logreg_grid_search
+# =========================
+# Evaluation
+# =========================
 
-# ===== Evaluation & explain =====
 from evaluation.cross_validation import run_5fold_cv
-from features.bit_mapping import extract_top_shap_fragments
 
 
-def run_pipeline(ecfp_radius=3, ecfp_bits=1024, top_shap_bits=20):
-    DATA_DIR = os.path.join(BASE_DIR, "data/raw")
-    OUTPUT_DIR = os.path.join(BASE_DIR, "results")
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+# =========================
+# SHAP fragment extraction
+# =========================
 
-    LABEL_COL = "label"
-    NAME_COL = "LabelCompoundName"
-    SMILES_COL = "SMILES"
+from features.bit_mapping import (
+    extract_top_shap_fragments
+)
 
-    dataset_files = glob(os.path.join(DATA_DIR, "*.csv"))
+
+# =========================
+# Fragment visualization
+# =========================
+
+from visualization.draw_fragments import (
+    draw_fragments_from_shap
+)
+
+
+
+def run_pipeline():
+
+    # Create folders
+
+    os.makedirs(
+        FEATURE_DIR,
+        exist_ok=True
+    )
+
+    os.makedirs(
+        RESULTS_DIR,
+        exist_ok=True
+    )
+
+
+    # =========================
+    # Find datasets
+    # =========================
+
+    dataset_files = glob(
+        os.path.join(
+            RAW_DATA_DIR,
+            "*.csv"
+        )
+    )
+
+
     if not dataset_files:
-        raise ValueError("No dataset found.")
 
-    for data_path in dataset_files:
-        dataset_name = os.path.splitext(os.path.basename(data_path))[0]
-        print(f"\n[INFO] Dataset: {dataset_name} - run_pipeline.py:42")
-
-        # ================= Step 1: ECFP =================
-        ecfp_path = os.path.join(DATA_DIR, f"{dataset_name}_ecfp{ecfp_bits}.tsv")
-        print("[STEP 1] Generating ECFP features... - run_pipeline.py:46")
-        extract_ecfp_features(
-            input_path=data_path,
-            output_path=ecfp_path,
-            smiles_col=SMILES_COL,
-            label_col=LABEL_COL,
-            name_col=NAME_COL,
-            radius=ecfp_radius,
-            n_bits=ecfp_bits
+        raise ValueError(
+            "No dataset found in data/raw/"
         )
 
-        # ================= Step 2: Load data =================
-        ids, X, y, _ = load_data(ecfp_path, LABEL_COL, NAME_COL)
-        print(f"[INFO] Loaded {X.shape[0]} samples, {X.shape[1]} features - run_pipeline.py:59")
 
-        dataset_out = os.path.join(OUTPUT_DIR, dataset_name)
-        os.makedirs(dataset_out, exist_ok=True)
 
-        # ================= Step 3: Define experiments =================
-        # experiments = {
-        #     "RF": {
-        #         "builder": build_rf,
-        #         "grid_search": rf_grid_search,
-        #         "model_type": "rf"
-        #     },
-        #     "XGB": {
-        #         "builder": build_xgb,
-        #         "grid_search": xgb_grid_search,
-        #         "model_type": "xgb"
-        #     },
-        #     "LogReg": {
-        #         "builder": build_logreg,
-        #         "grid_search": logreg_grid_search,
-        #         "model_type": "logreg"
-        #     }
-        # }
-        experiments = {
-            "RF": {
-                "builder": build_rf,
-                "grid_search": rf_grid_search,
-                "model_type": "rf"
-            }
-        }
-        # ================= Step 4: Run models =================
-        for model_name, cfg in experiments.items():
-            print(f"\n[MODEL] {model_name} - run_pipeline.py:91")
+    # =========================
+    # Process datasets
+    # =========================
 
-            # ---- 4.1 Grid search ----
-            print("[STEP 4.1] Grid search... - run_pipeline.py:94")
-            best_params, best_score = cfg["grid_search"](X, y)
-            print(f"[INFO] Best params: {best_params} - run_pipeline.py:96")
-            print(f"[INFO] Best CV score: {best_score:.4f} - run_pipeline.py:97")
 
-            # ---- 4.2 5-fold CV + SHAP ----
-            print("[STEP 4.2] 5fold CV + SHAP... - run_pipeline.py:100")
-            run_5fold_cv(
-                model_builder=lambda: cfg["builder"](**best_params),
-                ids=ids,
-                X=X,
-                y=y,
-                output_dir=dataset_out,
-                model_name=model_name,
-                model_type=cfg["model_type"]
+    for data_path in dataset_files:
+
+
+        dataset_name = os.path.splitext(
+            os.path.basename(data_path)
+        )[0]
+
+
+        print(
+            f"\n=============================="
+        )
+
+        print(
+            f"[INFO] Dataset: {dataset_name}"
+        )
+
+        print(
+            f"=============================="
+        )
+
+
+
+        # =========================
+        # Step 1
+        # Generate ECFP
+        # =========================
+
+
+        ecfp_path = os.path.join(
+            FEATURE_DIR,
+            f"{dataset_name}_ecfp{ECFP_BITS}.tsv"
+        )
+
+
+        print(
+            "[STEP 1] Generating ECFP features..."
+        )
+
+
+        extract_ecfp_features(
+
+            input_path=data_path,
+
+            output_path=ecfp_path,
+
+            smiles_col=SMILES_COL,
+
+            label_col=LABEL_COL,
+
+            name_col=NAME_COL,
+
+            radius=ECFP_RADIUS,
+
+            n_bits=ECFP_BITS
+        )
+
+
+
+        # =========================
+        # Step 2
+        # Load features
+        # =========================
+
+
+        ids, X, y, _ = load_data(
+
+            ecfp_path,
+
+            LABEL_COL,
+
+            NAME_COL
+
+        )
+
+
+        print(
+
+            f"[INFO] Samples: {X.shape[0]}, "
+            f"Features: {X.shape[1]}"
+
+        )
+
+
+
+        dataset_out = os.path.join(
+
+            RESULTS_DIR,
+
+            dataset_name
+
+        )
+
+
+        os.makedirs(
+
+            dataset_out,
+
+            exist_ok=True
+
+        )
+
+
+
+        # =========================
+        # Step 3
+        # Train models
+        # =========================
+
+
+        for model_name, cfg in MODEL_CONFIGS.items():
+
+
+            print(
+                f"\n[MODEL] {model_name}"
             )
 
-            # ---- 4.3 Extract top SHAP fragments ----
-            print("[STEP 4.3] Extracting SHAP fragments... - run_pipeline.py:112")
-            shap_path = os.path.join(dataset_out, model_name, "fold1", "training_shap.tsv")
-            frag_out = os.path.join(dataset_out, "fragments", model_name)
-            os.makedirs(frag_out, exist_ok=True)
+
+
+            # -------------------------
+            # Grid search
+            # -------------------------
+
+
+            print(
+                "[STEP 3.1] Grid search..."
+            )
+
+
+            best_params, best_score = (
+                cfg["grid_search"](X, y)
+            )
+
+
+            print(
+                f"[INFO] Best params: {best_params}"
+            )
+
+
+            print(
+                f"[INFO] Best CV score: {best_score:.4f}"
+            )
+
+
+
+            # -------------------------
+            # 5 Fold CV + SHAP
+            # -------------------------
+
+
+            print(
+                "[STEP 3.2] 5-fold CV + SHAP..."
+            )
+
+
+            run_5fold_cv(
+
+                model_builder=lambda:
+                    cfg["builder"](
+                        **best_params
+                    ),
+
+                ids=ids,
+
+                X=X,
+
+                y=y,
+
+                output_dir=dataset_out,
+
+                model_name=model_name,
+
+                model_type=cfg["model_type"]
+
+            )
+
+
+
+            # -------------------------
+            # Fragment extraction
+            # -------------------------
+
+
+            print(
+                "[STEP 3.3] Extract SHAP fragments..."
+            )
+
+
+
+            shap_path = os.path.join(
+
+                dataset_out,
+
+                model_name,
+
+                "fold1",
+
+                "training_shap.tsv"
+
+            )
+
+
+
+            fragment_dir = os.path.join(
+
+                dataset_out,
+
+                "fragments",
+
+                model_name
+
+            )
+
+
+            os.makedirs(
+
+                fragment_dir,
+
+                exist_ok=True
+
+            )
+
+
 
             extract_top_shap_fragments(
+
                 shap_df_path=shap_path,
+
                 dataset_df_path=data_path,
-                top_n=top_shap_bits,
-                output_dir=frag_out,
-                radius=ecfp_radius,
-                n_bits=ecfp_bits
+
+                top_n=TOP_SHAP_BITS,
+
+                output_dir=fragment_dir,
+
+                radius=ECFP_RADIUS,
+
+                n_bits=ECFP_BITS
+
             )
 
-    print("\n[INFO] Pipeline finished successfully! - run_pipeline.py:126")
+
+
+            # -------------------------
+            # Fragment PNG
+            # -------------------------
+
+
+            fragment_tsv = os.path.join(
+
+                fragment_dir,
+
+                "top_shap_fragments.tsv"
+
+            )
+
+
+            png_dir = os.path.join(
+
+                fragment_dir,
+
+                "pngs"
+
+            )
+
+
+            if os.path.exists(fragment_tsv):
+
+
+                draw_fragments_from_shap(
+
+                    fragments_df_path=fragment_tsv,
+
+                    output_dir=png_dir
+
+                )
+
+
+
+    print(
+
+        "\n[INFO] Pipeline finished successfully!"
+
+    )
+
+
 
 
 if __name__ == "__main__":
-    run_pipeline(ecfp_radius=3, ecfp_bits=1024, top_shap_bits=20)
+
+
+    run_pipeline()
