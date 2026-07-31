@@ -23,3 +23,10 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Results
+results/
+
+# Keep README example figures
+!results/examples/
+!results/examples/**
