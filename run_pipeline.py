@@ -4,6 +4,8 @@ import os
 import sys
 from glob import glob
 
+from evaluation import aggregate_metrics
+
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
@@ -283,7 +285,12 @@ def run_pipeline():
                 model_type=cfg["model_type"]
 
             )
-
+            aggregate_metrics(
+                model_dir=os.path.join(
+                    dataset_out,
+                    model_name
+                )
+            )
 
 
             # -------------------------

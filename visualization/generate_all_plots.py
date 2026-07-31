@@ -32,7 +32,7 @@ def generate_all_plots(
         output_path=os.path.join(output_dir, "roc_curve.png"),
         model_name=model_name,
     )
-    
+
     # Confusion Matrix
     plot_confusion_matrix(
         y_true=y_true,
@@ -51,7 +51,8 @@ def generate_all_plots(
     )
 
     # Mean SHAP bar
-    plot_mean_abs_shap(
-        mean_shap_path=mean_shap_path,
-        output_dir=output_dir,
-    )
+    if mean_shap_path is not None:
+        plot_mean_abs_shap(
+            mean_shap_path=mean_shap_path,
+            output_dir=output_dir,
+        )

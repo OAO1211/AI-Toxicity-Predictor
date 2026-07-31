@@ -1,20 +1,20 @@
 # model_selection/grid_search.py
-import numpy as np
-from sklearn.model_selection import GridSearchCV, StratifiedKFold
+import xgboost as xgb
+
+from sklearn.model_selection import (
+    GridSearchCV,
+    StratifiedKFold
+)
+
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import roc_auc_score, make_scorer
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-import xgboost as xgb
 
 # =========================
 # Metric
 # =========================
-roc_auc = make_scorer(
-    roc_auc_score,
-    needs_proba=True
-)
+
 
 # =========================
 # Model & param grid
@@ -70,23 +70,28 @@ def get_model_and_param_grid(model_name: str):
 
     return model, param_grid
 
+from sklearn.metrics import roc_auc_score
+
+
 # =========================
 # Grid search main
 # =========================
+
 def run_grid_search(
     X,
     y,
-    model_name: str = "rf",
-    cv_splits: int = 5,
-    scoring=roc_auc,
-    verbose: int = 2,
-    n_jobs: int = -1
+    model_name="rf",
+    cv_splits=5,
+    verbose=2,
+    n_jobs=-1
 ):
-    """
-    執行 GridSearchCV 並回傳 (best_params, best_score)
-    """
+
     model, param_grid = get_model_and_param_grid(model_name)
-    pipeline = Pipeline([("clf", model)])
+
+    pipeline = Pipeline([
+        ("clf", model)
+    ])
+
 
     cv = StratifiedKFold(
         n_splits=cv_splits,
@@ -94,33 +99,66 @@ def run_grid_search(
         random_state=42
     )
 
+
     grid = GridSearchCV(
         estimator=pipeline,
         param_grid=param_grid,
-        scoring=scoring,
+        scoring="roc_auc",
         cv=cv,
         n_jobs=n_jobs,
         verbose=verbose,
-        refit=True,
-        return_train_score=True
+        refit=True
     )
 
-    grid.fit(X, y)
 
-    best_params = {k.replace("clf__", ""): v for k, v in grid.best_params_.items()}
+    grid.fit(X,y)
+
+
+    best_params = {
+        k.replace("clf__",""):v
+        for k,v in grid.best_params_.items()
+    }
+
+
     best_score = grid.best_score_
 
-    print(f"[✓] Grid search finished ({model_name}) - grid_search.py:113")
-    print(f"Best score ({scoring._score_func.__name__}): {best_score:.4f} - grid_search.py:114")
-    print("Best params: - grid_search.py:115")
-    for k, v in best_params.items():
-        print(f"{k}: {v} - grid_search.py:117")
 
-    return best_params, best_score
+    print(
+        f"[✓] Grid search finished ({model_name})"
+    )
 
+    print(
+        f"Best ROC-AUC: {best_score:.4f}"
+    )
+
+    print(
+        f"Best params: {best_params}"
+    )
+
+
+    return best_params,best_score
 # =========================
 # Wrapper functions
 # =========================
-def rf_grid_search(X, y): return run_grid_search(X, y, model_name="rf")
-def xgb_grid_search(X, y): return run_grid_search(X, y, model_name="xgb")
-def logreg_grid_search(X, y): return run_grid_search(X, y, model_name="logreg")
+def rf_grid_search(X,y):
+    return run_grid_search(
+        X,
+        y,
+        model_name="rf"
+    )
+
+
+def xgb_grid_search(X,y):
+    return run_grid_search(
+        X,
+        y,
+        model_name="xgb"
+    )
+
+
+def logreg_grid_search(X,y):
+    return run_grid_search(
+        X,
+        y,
+        model_name="logreg"
+    )
