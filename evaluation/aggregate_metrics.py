@@ -1,120 +1,162 @@
+# evaluation/aggregate_metrics.py
+
 import os
+import glob
 import pandas as pd
 
 from sklearn.metrics import (
-    roc_auc_score,
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
-    matthews_corrcoef,
-    confusion_matrix
+    roc_auc_score
 )
 
 
-def evaluate_model_cv(
-    model_dir
-):
+def calculate_metrics(y_true, y_prob, y_pred):
 
-    fold_results = []
-
-    all_true = []
-    all_prob = []
-    all_pred = []
-
-
-    for fold in range(1,6):
-
-        pred_path = os.path.join(
-            model_dir,
-            f"fold{fold}",
-            "predictions.csv"
-        )
-
-
-        df = pd.read_csv(pred_path)
-
-
-        y_true = df["y_true"]
-        y_prob = df["y_prob"]
-        y_pred = df["y_pred"]
-
-
-        metrics = {
-
-            "fold": fold,
-
-            "ROC-AUC":
-                roc_auc_score(
-                    y_true,
-                    y_prob
-                ),
-
-            "Accuracy":
-                accuracy_score(
-                    y_true,
-                    y_pred
-                ),
-
-            "Precision":
-                precision_score(
-                    y_true,
-                    y_pred
-                ),
-
-            "Recall":
-                recall_score(
-                    y_true,
-                    y_pred
-                ),
-
-            "F1":
-                f1_score(
-                    y_true,
-                    y_pred
-                ),
-
-            "MCC":
-                matthews_corrcoef(
-                    y_true,
-                    y_pred
-                )
-        }
-
-
-        fold_results.append(metrics)
-
-
-        all_true.extend(y_true)
-        all_prob.extend(y_prob)
-        all_pred.extend(y_pred)
-
-
-    fold_df = pd.DataFrame(
-        fold_results
-    )
-
-
-    summary = {
-
-        "ROC-AUC":
-            f"{fold_df['ROC-AUC'].mean():.3f} ± {fold_df['ROC-AUC'].std():.3f}",
-
+    return {
         "Accuracy":
-            f"{fold_df['Accuracy'].mean():.3f} ± {fold_df['Accuracy'].std():.3f}",
+            accuracy_score(y_true, y_pred),
+
+        "Precision":
+            precision_score(
+                y_true,
+                y_pred,
+                zero_division=0
+            ),
+
+        "Recall":
+            recall_score(
+                y_true,
+                y_pred,
+                zero_division=0
+            ),
 
         "F1":
-            f"{fold_df['F1'].mean():.3f} ± {fold_df['F1'].std():.3f}",
+            f1_score(
+                y_true,
+                y_pred,
+                zero_division=0
+            ),
 
-        "MCC":
-            f"{fold_df['MCC'].mean():.3f} ± {fold_df['MCC'].std():.3f}"
+        "ROC-AUC":
+            roc_auc_score(
+                y_true,
+                y_prob
+            )
     }
 
 
-    return (
-        fold_df,
-        pd.DataFrame([summary]),
-        all_true,
-        all_prob,
-        all_pred
+
+def aggregate_model_metrics(
+    results_dir,
+    output_path
+):
+
+
+    # create output directory
+    os.makedirs(
+        os.path.dirname(output_path),
+        exist_ok=True
+    )
+
+    records = []
+
+    prediction_files = glob.glob(
+        os.path.join(
+            results_dir,
+            "*",
+            "*",
+            "fold*",
+            "predictions.csv"
+        )
+    )
+
+
+    for file in prediction_files:
+
+        path_parts = file.split(os.sep)
+
+        model_name = path_parts[-3]
+
+        fold_name = path_parts[-2]
+
+
+        df = pd.read_csv(file)
+
+
+        metrics = calculate_metrics(
+            df["y_true"],
+            df["y_prob"],
+            df["y_pred"]
+        )
+
+
+        metrics["Model"] = model_name
+        metrics["Fold"] = fold_name
+
+
+        records.append(metrics)
+
+
+
+    result = pd.DataFrame(records)
+
+
+    # ==========================
+    # fold result
+    # ==========================
+    fold_output = output_path.replace(
+    ".csv",
+    "_folds.csv"
+)
+
+    result.to_csv(
+        fold_output,
+        index=False
+    )
+
+
+    # ==========================
+    # mean ± std
+    # ==========================
+
+    summary = (
+        result
+        .groupby("Model")
+        .agg(
+            {
+                "Accuracy":["mean","std"],
+                "Precision":["mean","std"],
+                "Recall":["mean","std"],
+                "F1":["mean","std"],
+                "ROC-AUC":["mean","std"]
+            }
+        )
+    )
+    summary.columns = [
+        f"{metric}_{stat}"
+        for metric, stat in summary.columns
+    ]
+
+    summary = summary.reset_index()
+
+    summary.to_csv(
+        output_path
+    )
+
+
+    print(
+        "[DONE] Metrics aggregation finished"
+    )
+
+
+if __name__ == "__main__":
+
+
+    aggregate_model_metrics(
+        results_dir="results",
+        output_path=
+        "results/comparison/metrics_summary.csv"
     )
