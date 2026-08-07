@@ -285,14 +285,7 @@ def run_pipeline():
                 model_type=cfg["model_type"]
 
             )
-            aggregate_model_metrics(
-                results_dir=RESULTS_DIR,
-                output_path=os.path.join(
-                    RESULTS_DIR,
-                    "comparison",
-                    "metrics_summary.csv"
-                )
-            )
+            
 
 
             # -------------------------
@@ -392,7 +385,20 @@ def run_pipeline():
                     output_dir=png_dir
 
                 )
+        # =========================
+        # Aggregate all metrics
+        # =========================
 
+        print("\n[STEP 4] Aggregate metrics... - run_pipeline.py:392")
+
+        aggregate_model_metrics(
+            results_dir=RESULTS_DIR,
+            output_path=os.path.join(
+                RESULTS_DIR,
+                "comparison",
+                "metrics_summary.csv"
+            )
+        )
 
 
     print(

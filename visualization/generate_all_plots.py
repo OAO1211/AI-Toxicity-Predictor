@@ -53,6 +53,6 @@ def generate_all_plots(
     # Mean SHAP bar
     if mean_shap_path is not None:
         plot_mean_abs_shap(
-            mean_shap_path=mean_shap_path,
-            output_dir=output_dir,
+            mean_shap_path,
+            output_dir,
         )
