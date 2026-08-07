@@ -66,21 +66,33 @@ def aggregate_model_metrics(
     prediction_files = glob.glob(
         os.path.join(
             results_dir,
-            "*",
-            "*",
-            "fold*",
+            "**",
             "predictions.csv"
-        )
+        ),
+        recursive=True
+    )
+
+    print("\n[DEBUG] prediction files - aggregate_metrics.py:75")
+
+    for f in prediction_files:
+        print(f)
+
+    print(
+        f"Found {len(prediction_files)} files"
     )
 
 
     for file in prediction_files:
 
-        path_parts = file.split(os.sep)
+        model_name = os.path.basename(
+            os.path.dirname(
+            os.path.dirname(file)
+        )
+        )
 
-        model_name = path_parts[-3]
-
-        fold_name = path_parts[-2]
+        fold_name = os.path.basename(
+            os.path.dirname(file)
+        )
 
 
         df = pd.read_csv(file)
@@ -102,7 +114,12 @@ def aggregate_model_metrics(
 
 
     result = pd.DataFrame(records)
+    print(result)
 
+    if result.empty:
+        raise ValueError(
+            "No prediction files found. Check results directory."
+        )
 
     # ==========================
     # fold result
