@@ -230,47 +230,26 @@ def run_pipeline():
 
 
             # -------------------------
-            # Grid search
+            # 5 Fold CV + nested grid search + SHAP
+            # -------------------------
+            #
+            # Grid search 不再對全部資料 (X, y) 執行一次；
+            # 而是把 builder / grid_search 函式交給 run_5fold_cv，
+            # 讓每個 outer fold 內部只用該 fold 的訓練資料做超參數搜尋，
+            # 避免 test fold 的資訊洩漏進超參數選擇 (nested CV)。
             # -------------------------
 
 
             print(
-                "[STEP 3.1] Grid search..."
-            )
-
-
-            best_params, best_score = (
-                cfg["grid_search"](X, y)
-            )
-
-
-            print(
-                f"[INFO] Best params: {best_params}"
-            )
-
-
-            print(
-                f"[INFO] Best CV score: {best_score:.4f}"
-            )
-
-
-
-            # -------------------------
-            # 5 Fold CV + SHAP
-            # -------------------------
-
-
-            print(
-                "[STEP 3.2] 5-fold CV + SHAP..."
+                "[STEP 3] 5-fold nested CV (grid search + SHAP)..."
             )
 
 
             run_5fold_cv(
 
-                model_builder=lambda:
-                    cfg["builder"](
-                        **best_params
-                    ),
+                builder=cfg["builder"],
+
+                grid_search_fn=cfg["grid_search"],
 
                 ids=ids,
 
@@ -389,7 +368,7 @@ def run_pipeline():
         # Aggregate all metrics
         # =========================
 
-        print("\n[STEP 4] Aggregate metrics... - run_pipeline.py:392")
+        print("\n[STEP 4] Aggregate metrics... - run_pipeline.py:371")
 
         aggregate_model_metrics(
             results_dir=RESULTS_DIR,

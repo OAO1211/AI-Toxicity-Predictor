@@ -1,5 +1,6 @@
 #evaluation/cross_validation.py
 import os
+import json
 import numpy as np
 import pandas as pd
 
@@ -16,7 +17,8 @@ from visualization.plot_shap import plot_mean_abs_shap
 
 
 def run_5fold_cv(
-    model_builder,
+    builder,
+    grid_search_fn,
     ids,
     X,
     y,
@@ -24,6 +26,16 @@ def run_5fold_cv(
     model_name,
     model_type="rf"
 ):
+    """
+    builder: 呼叫方式為 builder(**best_params) -> sklearn/xgboost estimator
+    grid_search_fn: 呼叫方式為 grid_search_fn(X_train, y_train) -> (best_params, best_score)
+
+    重要：grid_search_fn 在每個 outer fold 內部才會被呼叫，
+    且只會看到該 fold 的訓練資料 (X_train, y_train)。
+    這是為了避免「先在全部資料上做 grid search，再用同一份資料做 CV 評估」
+    所造成的資訊洩漏（outer test fold 間接影響了超參數選擇），
+    也就是正確做法的 nested cross-validation。
+    """
 
     skf = StratifiedKFold(
         n_splits=5,
@@ -63,10 +75,57 @@ def run_5fold_cv(
 
 
         # -------------------------
+        # Fold output directory
+        # -------------------------
+
+        fold_dir = os.path.join(
+            output_dir,
+            model_name,
+            f"fold{fold}"
+        )
+
+        os.makedirs(
+            fold_dir,
+            exist_ok=True
+        )
+
+
+        # -------------------------
+        # Grid search (inner CV, 只用本 fold 的訓練資料)
+        # -------------------------
+
+        print(
+            f"[INFO] {model_name} fold {fold} grid search..."
+        )
+
+        best_params, best_cv_score = grid_search_fn(
+            X_train,
+            y_train
+        )
+
+        print(
+            f"[INFO] {model_name} fold {fold} best params: {best_params}"
+        )
+
+        with open(
+            os.path.join(fold_dir, "best_params.json"),
+            "w"
+        ) as f:
+            json.dump(
+                {
+                    "best_params": best_params,
+                    "inner_cv_best_score": best_cv_score
+                },
+                f,
+                indent=2
+            )
+
+
+        # -------------------------
         # Train model
         # -------------------------
 
-        model = model_builder()
+        model = builder(**best_params)
 
         model.fit(
             X_train,
@@ -87,20 +146,6 @@ def run_5fold_cv(
         pred_label = model.predict(X_test).astype(int)
 
 
-        # -------------------------
-        # Fold output directory
-        # -------------------------
-
-        fold_dir = os.path.join(
-            output_dir,
-            model_name,
-            f"fold{fold}"
-        )
-
-        os.makedirs(
-            fold_dir,
-            exist_ok=True
-        )
         # =====================
         # Save predictions FIRST
         # =====================

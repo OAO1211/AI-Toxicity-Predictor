@@ -180,85 +180,13 @@ MODEL_CONFIGS = {
 # =========================
 # Grid Search parameters
 # =========================
-
-
-GRID_SEARCH = {
-
-    "enabled": True,
-
-
-    "cv": 5,
-
-
-    "scoring": "roc_auc",
-
-
-    "n_jobs": -1,
-
-
-
-    "models": {
-
-
-        "RF": {
-
-            "n_estimators": [
-                200,
-                500
-            ],
-
-            "max_depth": [
-                None,
-                20
-            ],
-
-            "min_samples_leaf": [
-                1,
-                5
-            ]
-
-        },
-
-
-
-        "XGB": {
-
-            "max_depth": [
-                3,
-                6
-            ],
-
-            "learning_rate": [
-                0.01,
-                0.05
-            ],
-
-            "n_estimators": [
-                200,
-                400
-            ]
-
-        },
-
-
-
-        "LogReg": {
-
-            "C": [
-                0.1,
-                1.0,
-                10
-            ],
-
-            "penalty": [
-                "l2"
-            ]
-
-        }
-
-    }
-
-}
+#
+# 注意：實際使用的參數網格定義在
+# model_selection/grid_search.py 的 get_model_and_param_grid()。
+# 這裡先前有一份重複、且未被任何程式引用的 GRID_SEARCH 設定，
+# 內容與 grid_search.py 不一致，容易讓人誤以為改這裡就能調整搜尋範圍，
+# 已移除以避免混淆。若要調整超參數搜尋範圍，請直接修改
+# model_selection/grid_search.py。
 
 
 

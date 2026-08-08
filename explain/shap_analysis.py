@@ -1,6 +1,4 @@
 # explain/shap_analysis.py
-from xml.parsers.expat import model
-
 import shap
 import numpy as np
 import pandas as pd

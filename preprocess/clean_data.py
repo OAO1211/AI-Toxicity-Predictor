@@ -27,14 +27,21 @@ def transform_with_encoders(X, encoders):
     return X
 
 
-def split_xy(df, label_col, sample_col=None):
+def split_xy(df, label_col, sample_col=None, drop_cols=("SMILES",)):
     ids = (
         df[sample_col].astype(str).values
         if sample_col
         else np.array([f"sample_{i}" for i in range(len(df))])
     )
 
-    X = df.drop(columns=[label_col] + ([sample_col] if sample_col else []))
+    cols_to_drop = [label_col]
+    if sample_col:
+        cols_to_drop.append(sample_col)
+    for col in drop_cols:
+        if col in df.columns and col not in cols_to_drop:
+            cols_to_drop.append(col)
+
+    X = df.drop(columns=cols_to_drop)
     y = df[label_col]
 
     return ids, X, y
