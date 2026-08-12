@@ -9,7 +9,9 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     f1_score,
-    roc_auc_score
+    roc_auc_score,
+    average_precision_score,
+    balanced_accuracy_score
 )
 
 
@@ -18,6 +20,9 @@ def calculate_metrics(y_true, y_prob, y_pred):
     return {
         "Accuracy":
             accuracy_score(y_true, y_pred),
+
+        "BalancedAccuracy":
+            balanced_accuracy_score(y_true, y_pred),
 
         "Precision":
             precision_score(
@@ -42,6 +47,15 @@ def calculate_metrics(y_true, y_prob, y_pred):
 
         "ROC-AUC":
             roc_auc_score(
+                y_true,
+                y_prob
+            ),
+
+        # 資料集 label 分佈約 267:183（非完全平衡），
+        # PR-AUC 比 ROC-AUC 更能反映在少數類別（DILI 陽性）上的表現，
+        # 兩者一起看比較不會被 ROC-AUC 的樂觀假象誤導。
+        "PR-AUC":
+            average_precision_score(
                 y_true,
                 y_prob
             )
@@ -72,7 +86,7 @@ def aggregate_model_metrics(
         recursive=True
     )
 
-    print("\n[DEBUG] prediction files - aggregate_metrics.py:75")
+    print("\n[DEBUG] prediction files - aggregate_metrics.py:89")
 
     for f in prediction_files:
         print(f)
@@ -84,15 +98,14 @@ def aggregate_model_metrics(
 
     for file in prediction_files:
 
-        model_name = os.path.basename(
-            os.path.dirname(
-            os.path.dirname(file)
-        )
-        )
+        # 目錄結構：results_dir/dataset_name/FeatureSet/model_name/foldN/predictions.csv
+        fold_dir = os.path.dirname(file)
+        model_dir = os.path.dirname(fold_dir)
+        feature_set_dir = os.path.dirname(model_dir)
 
-        fold_name = os.path.basename(
-            os.path.dirname(file)
-        )
+        model_name = os.path.basename(model_dir)
+        feature_set_name = os.path.basename(feature_set_dir)
+        fold_name = os.path.basename(fold_dir)
 
 
         df = pd.read_csv(file)
@@ -105,6 +118,7 @@ def aggregate_model_metrics(
         )
 
 
+        metrics["FeatureSet"] = feature_set_name
         metrics["Model"] = model_name
         metrics["Fold"] = fold_name
 
@@ -141,14 +155,16 @@ def aggregate_model_metrics(
 
     summary = (
         result
-        .groupby("Model")
+        .groupby(["FeatureSet", "Model"])
         .agg(
             {
                 "Accuracy":["mean","std"],
+                "BalancedAccuracy":["mean","std"],
                 "Precision":["mean","std"],
                 "Recall":["mean","std"],
                 "F1":["mean","std"],
-                "ROC-AUC":["mean","std"]
+                "ROC-AUC":["mean","std"],
+                "PR-AUC":["mean","std"]
             }
         )
     )

@@ -146,26 +146,6 @@ def run_5fold_cv(
         pred_label = model.predict(X_test).astype(int)
 
 
-        # =====================
-        # Save predictions FIRST
-        # =====================
-
-        prediction_df = pd.DataFrame({
-            "SampleID": test_ids,
-            "y_true": y_test.values,
-            "y_prob": pred_test,
-            "y_pred": pred_label
-        })
-
-
-        prediction_df.to_csv(
-            os.path.join(
-                fold_dir,
-                "predictions.csv"
-            ),
-            index=False
-        )
-
         # ==================================================
         # SHAP calculation
         # ==================================================

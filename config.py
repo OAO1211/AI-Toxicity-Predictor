@@ -83,6 +83,20 @@ NAME_COL = "LabelCompoundName"
 SMILES_COL = "SMILES"
 
 
+# =========================
+# Feature set names
+# =========================
+#
+# 用於區分不同的特徵集合（ECFP vs 物理化學 descriptors），
+# 兩者會分別跑過同一組模型，作為 baseline 比較。
+# run_pipeline.py / evaluation/aggregate_metrics.py 共用這兩個常數，
+# 避免字串在不同檔案裡打錯導致比較表對不起來。
+
+FEATURE_SET_ECFP = "ECFP"
+
+FEATURE_SET_DESCRIPTORS = "Descriptors"
+
+
 
 
 # =========================

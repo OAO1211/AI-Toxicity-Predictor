@@ -30,3 +30,12 @@ results/
 # Keep README example figures
 !results/examples/
 !results/examples/**
+
+# Generated feature files (ECFP / descriptors tsv)
+# 這些檔案是 run_pipeline.py 自動產生的，可以重新跑出來，不需要進版控
+data/features/*
+!data/features/.gitkeep
+
+# 如果原始資料集也不想上 GitHub（例如授權/隱私考量），取消下面兩行的註解：
+# data/raw/*
+# !data/raw/.gitkeep
