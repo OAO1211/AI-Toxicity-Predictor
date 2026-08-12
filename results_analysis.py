@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 
-BASE_DIR = "results/dili_binary_labeled - 複製"
+BASE_DIR = os.path.join("results", "dili_binary_labeled - 複製", "ECFP")
 MODELS = ["LogReg", "RF", "XGB"]
 
 all_results = []
@@ -45,7 +45,7 @@ print(f"[✓] Saved aggregated SHAP to Excel: {excel_out} - results_analysis.py:
 import os
 import pandas as pd
 
-BASE_DIR = "results/dili_binary_labeled - 複製"
+BASE_DIR = os.path.join("results", "dili_binary_labeled - 複製", "ECFP")
 MODELS = ["LogReg", "RF", "XGB"]
 TOP_N = 20  # top N SHAP bits
 

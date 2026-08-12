@@ -12,37 +12,43 @@ This project develops an **explainable machine learning framework** for predicti
 
 The framework integrates:
 
-- Molecular representation using RDKit and ECFP fingerprints
+- Molecular representation using RDKit: ECFP fingerprints **and** physicochemical descriptors (as a baseline for comparison)
 - Multiple machine learning models
-- Cross-validation evaluation
+- Nested cross-validation evaluation
 - SHAP-based model interpretation
-- Chemical fragment visualization
+- Chemical fragment visualization (ECFP only)
 
-The goal is not only to predict toxicity risk, but also to provide **chemically interpretable explanations** for model decisions.
+The goal is not only to predict toxicity risk, but also to provide **chemically interpretable explanations** for model decisions, and to compare how much predictive signal comes from structural fingerprints versus simple physicochemical properties.
 
 ---
 
 # Pipeline Overview
-Molecular Structure (SMILES)
-              |
-              v
-        RDKit Processing
-              |
-              v
-  ECFP Molecular Fingerprints
-              |
-              v
- Machine Learning Classification
- (Random Forest / XGBoost / Logistic Regression)
-              |
-              v
-     Cross-validation Evaluation
-              |
-              v
-        SHAP Explainability
-              |
-              v
- Molecular Fragment Interpretation
+                          Molecular Structure (SMILES)
+                                     |
+                                     v
+                              RDKit Processing
+                                     |
+                    ┌────────────────┴────────────────┐
+                    v                                  v
+          ECFP Molecular Fingerprints      Physicochemical Descriptors
+                    |                                  |
+                    └────────────────┬─────────────────┘
+                                      v
+                     Machine Learning Classification
+                (Random Forest / XGBoost / Logistic Regression)
+                                      |
+                                      v
+                     Nested 5-fold Cross-validation
+                       (inner grid search per outer fold)
+                                      |
+                                      v
+                            SHAP Explainability
+                                      |
+                                      v
+                Molecular Fragment Interpretation (ECFP only)
+                                      |
+                                      v
+                  ECFP vs Descriptors Performance Comparison
  
 ---
 
@@ -50,13 +56,21 @@ Molecular Structure (SMILES)
 
 ## Molecular Feature Extraction
 
+Two independent feature representations are extracted from SMILES and evaluated separately, as a baseline comparison:
+
+**1. ECFP (Extended Connectivity Fingerprints)**
 - Convert SMILES strings into molecular fingerprints using RDKit
-- Generate Extended Connectivity Fingerprints (ECFP)
 - Configurable fingerprint radius and bit length
 
 Default configuration:
 ECFP radius = 3
 ECFP bits = 1024
+
+**2. Physicochemical Descriptors (baseline)**
+- 15 classic RDKit-computed descriptors: MolWt, ExactMolWt, MolLogP, TPSA, HBD, HBA, RotatableBonds, RingCount, AromaticRings, AliphaticRings, HeavyAtoms, FractionCSP3, MolMR, LabuteASA, BertzCT
+- Low-dimensional, human-interpretable, no bit-hashing collisions
+- Used as a baseline to quantify how much predictive value the high-dimensional structural fingerprint (ECFP) adds over simple physicochemical properties
+
 ---
 
 ## Machine Learning Models
@@ -73,7 +87,7 @@ The framework supports multiple classification algorithms:
 
 ## Model Optimization
 
-Hyperparameter optimization is performed using grid search.
+Hyperparameter optimization is performed using **nested** grid search: for every outer cross-validation fold, the grid search is run only on that fold's training data (inner 5-fold CV), so the held-out outer test fold never influences hyperparameter selection.
 
 Examples:
 
@@ -86,10 +100,11 @@ Examples:
 
 ## Cross-validation
 
-Model performance is evaluated using:
+Model performance is evaluated using nested stratified 5-fold cross-validation (5 outer folds, each with its own inner grid search), reported as mean ± std across the 5 outer folds:
 
-- Stratified 5-fold cross-validation
 - ROC-AUC
+- PR-AUC (average precision — more informative than ROC-AUC given the moderately imbalanced label distribution, ~267:183)
+- Balanced Accuracy
 - F1-score
 - Precision
 - Recall
@@ -124,6 +139,7 @@ dili_ml_project/
 │   └── raw molecular datasets
 ├── features/
 │   ├── ecfp.py
+│   ├── descriptors.py
 │   └── bit_mapping.py
 ├── models/
 │   ├── train_rf.py
@@ -196,10 +212,12 @@ SHAP calculation
 Fragment extraction
 Visualization generation
 Results
-After running the pipeline, the following outputs will be generated:
+After running the pipeline, the following outputs will be generated, separately under results/<dataset_name>/ECFP/ and results/<dataset_name>/Descriptors/:
 Model Evaluation
 Examples:
 ROC-AUC
+PR-AUC
+Balanced Accuracy
 F1-score
 Precision / Recall
 Confusion matrix
@@ -210,10 +228,10 @@ training_shap.tsv
 testing_shap.tsv
 
 mean_abs_shap.tsv
-Fragment Visualization
-Important molecular fragments identified by SHAP are converted back into chemical structures using RDKit.
+Fragment Visualization (ECFP only)
+Important molecular fragments identified by SHAP are converted back into chemical structures using RDKit. Descriptors don't have a bit-to-substructure mapping, so this step only runs for the ECFP feature set.
 Example output:
-results/
+results/<dataset_name>/ECFP/
 
 └── fragments/
 
@@ -222,10 +240,12 @@ results/
     ├── XGB/
 
     └── LogReg/
+ECFP vs Descriptors Comparison
+results/comparison/metrics_summary.csv aggregates all folds, grouped by FeatureSet + Model (mean ± std), so ECFP and Descriptors results can be compared side by side for every model.
 Future Development
 Future improvements include:
 Integration of molecular graph neural networks (GNN)
-Incorporation of physicochemical properties
+Combined ECFP + physicochemical descriptor feature sets (to test whether descriptors add complementary information beyond structural fingerprints, after the current ECFP-only vs descriptors-only comparison)
 Integration of pharmacokinetic and ADMET features
 Larger DILI benchmark datasets
 Deployment as an interactive prediction platform
