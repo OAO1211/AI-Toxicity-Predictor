@@ -105,6 +105,8 @@ def get_model_and_param_grid(model_name: str, quick_mode: bool = False):
 
 from sklearn.metrics import roc_auc_score
 
+from preprocess.scaling import DescriptorOnlyScaler
+
 
 # =========================
 # Grid search main
@@ -117,8 +119,22 @@ def run_grid_search(
     cv_splits=5,
     verbose=2,
     n_jobs=-1,
-    quick_mode=False
+    quick_mode=False,
+    use_scaler=False
 ):
+    """
+    use_scaler=True 時，會在 Pipeline 裡加一個 DescriptorOnlyScaler
+    (只 scale 非 ECFP_ 開頭的欄位)：
+
+        Pipeline([("scaler", DescriptorOnlyScaler()), ("clf", model)])
+
+    因為 scaler 是 Pipeline 的一個 step，GridSearchCV 會在每一個
+    inner CV fold 自動 clone 一份全新、未 fit 的 scaler，只用該 inner
+    fold 的 training 部分去 fit——inner validation fold 不會有任何
+    分布資訊洩漏進 scaler，這是嚴格定義下的 nested cross-validation
+    （而不是「先在整個 outer training set 上 fit 一次 scaler，再做
+    inner CV」這種較寬鬆的做法）。
+    """
 
     if quick_mode:
         print(
@@ -131,9 +147,15 @@ def run_grid_search(
         quick_mode=quick_mode
     )
 
-    pipeline = Pipeline([
-        ("clf", model)
-    ])
+    if use_scaler:
+        pipeline = Pipeline([
+            ("scaler", DescriptorOnlyScaler()),
+            ("clf", model)
+        ])
+    else:
+        pipeline = Pipeline([
+            ("clf", model)
+        ])
 
 
     cv = StratifiedKFold(
@@ -167,7 +189,8 @@ def run_grid_search(
 
 
     print(
-        f"[✓] Grid search finished ({model_name}, quick_mode={quick_mode})"
+        f"[✓] Grid search finished ({model_name}, quick_mode={quick_mode}, "
+        f"use_scaler={use_scaler})"
     )
 
     print(
@@ -183,28 +206,53 @@ def run_grid_search(
 # =========================
 # Wrapper functions
 # =========================
-def rf_grid_search(X, y, quick_mode=False):
+def rf_grid_search(X, y, quick_mode=False, use_scaler=False):
     return run_grid_search(
         X,
         y,
         model_name="rf",
-        quick_mode=quick_mode
+        quick_mode=quick_mode,
+        use_scaler=use_scaler
     )
 
 
-def xgb_grid_search(X, y, quick_mode=False):
+def xgb_grid_search(X, y, quick_mode=False, use_scaler=False):
     return run_grid_search(
         X,
         y,
         model_name="xgb",
-        quick_mode=quick_mode
+        quick_mode=quick_mode,
+        use_scaler=use_scaler
     )
 
 
-def logreg_grid_search(X, y, quick_mode=False):
+def logreg_grid_search(X, y, quick_mode=False, use_scaler=False):
     return run_grid_search(
         X,
         y,
         model_name="logreg",
-        quick_mode=quick_mode
+        quick_mode=quick_mode,
+        use_scaler=use_scaler
     )
+
+
+# =========================
+# Scaled builder wrapper
+# =========================
+
+def make_scaled_builder(base_builder):
+    """
+    把一個「回傳裸模型」的 builder（例如 build_logreg）包成
+    「回傳 Pipeline(scaler + 裸模型)」的 builder，讓 run_5fold_cv
+    在 outer fold 重新 fit 最終模型時，用的是跟 grid search 內部
+    完全相同的 Pipeline 結構（scaler + clf），兩邊一致。
+
+    每次呼叫都會建立一個全新、未 fit 的 DescriptorOnlyScaler，
+    不會跟 grid search 內部 clone 出來的 scaler 共享任何已 fit 的狀態。
+    """
+    def _builder(**params):
+        return Pipeline([
+            ("scaler", DescriptorOnlyScaler()),
+            ("clf", base_builder(**params))
+        ])
+    return _builder

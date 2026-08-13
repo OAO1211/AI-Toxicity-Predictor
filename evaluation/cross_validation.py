@@ -24,11 +24,12 @@ def run_5fold_cv(
     y,
     output_dir,
     model_name,
-    model_type="rf",
-    feature_transform_fn=None
+    model_type="rf"
 ):
     """
     builder: 呼叫方式為 builder(**best_params) -> sklearn/xgboost estimator
+             （也可能是一個 sklearn Pipeline，例如 scaler + 裸模型，
+             見 model_selection.grid_search.make_scaled_builder）
     grid_search_fn: 呼叫方式為 grid_search_fn(X_train, y_train) -> (best_params, best_score)
 
     重要：grid_search_fn 在每個 outer fold 內部才會被呼叫，
@@ -37,11 +38,12 @@ def run_5fold_cv(
     所造成的資訊洩漏（outer test fold 間接影響了超參數選擇），
     也就是正確做法的 nested cross-validation。
 
-    feature_transform_fn: 選填，呼叫方式為
-    feature_transform_fn(X_train, X_test) -> (X_train_transformed, X_test_transformed)
-    用來做 fold 內部的特徵前處理（例如 Combined 特徵集合裡，只對
-    physicochemical descriptors 做 StandardScaler、ECFP bits 維持原樣），
-    一定只用該 fold 的 X_train 去 fit，避免 test fold 的分布資訊外洩。
+    如果這個 (feature set, model) 組合需要對 descriptors 做 scaling
+    （目前只有 Descriptors/Combined_Scaled 的 LogReg），scaling 本身
+    是包在 builder/grid_search_fn 內部的 sklearn Pipeline 裡處理，
+    讓 GridSearchCV 在每一個 inner fold 都重新 fit scaler，不會有
+    inner validation fold 的分布資訊外洩——比起「在 outer fold 開始
+    時就先 fit 好 scaler、整個 inner CV 共用同一份 scaler」更嚴格。
     """
 
     skf = StratifiedKFold(
@@ -79,19 +81,6 @@ def run_5fold_cv(
 
         train_ids = np.array(ids)[train_idx]
         test_ids = np.array(ids)[test_idx]
-
-
-        # -------------------------
-        # Optional per-fold feature transform (e.g. descriptor scaling)
-        # 只用這個 fold 的 X_train 去 fit，X_test 只做 transform，
-        # 避免 test fold 的資訊洩漏進前處理步驟。
-        # -------------------------
-
-        if feature_transform_fn is not None:
-            X_train, X_test = feature_transform_fn(
-                X_train,
-                X_test
-            )
 
 
         # -------------------------
@@ -169,16 +158,31 @@ def run_5fold_cv(
         # ==================================================
         # SHAP calculation
         # ==================================================
+        #
+        # 如果 model 是 Pipeline(scaler + clf)（目前只有做了 scaling 的
+        # LogReg 會這樣），shap.TreeExplainer / LinearExplainer 都需要
+        # 裸模型，不能直接吃 Pipeline，所以這裡先把 scaler 和 clf 拆開：
+        # clf 用來建 explainer，X 則先手動過 scaler.transform() 再餵進去，
+        # 這樣 SHAP 看到的就是模型實際「看到」的（已經 scale 過的）特徵空間。
+
+        if hasattr(model, "named_steps") and "scaler" in model.named_steps:
+            clf_for_shap = model.named_steps["clf"]
+            X_train_for_shap = model.named_steps["scaler"].transform(X_train)
+            X_test_for_shap = model.named_steps["scaler"].transform(X_test)
+        else:
+            clf_for_shap = model
+            X_train_for_shap = X_train
+            X_test_for_shap = X_test
 
         shap_values_train, baseline, explainer = compute_shap(
-            model,
-            X_train,
+            clf_for_shap,
+            X_train_for_shap,
             model_type=model_type
         )
 
 
         shap_values_test = explainer.shap_values(
-            X_test
+            X_test_for_shap
         )
 
 

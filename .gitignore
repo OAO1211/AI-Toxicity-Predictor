@@ -58,3 +58,5 @@ data/features/*
 # 如果原始資料集也不想上 GitHub（例如授權/隱私考量），取消下面兩行的註解：
 # data/raw/*
 # !data/raw/.gitkeep
+# Editor config (personal, shouldn't be shared)
+.vscode/

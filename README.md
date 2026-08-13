@@ -76,13 +76,21 @@ ECFP bits = 1024
 - 15 classic RDKit-computed descriptors: MolWt, ExactMolWt, MolLogP, TPSA, HBD, HBA, RotatableBonds, RingCount, AromaticRings, AliphaticRings, HeavyAtoms, FractionCSP3, MolMR, LabuteASA, BertzCT
 - Low-dimensional, human-interpretable, no bit-hashing collisions
 - Used as a baseline to quantify how much predictive value the high-dimensional structural fingerprint (ECFP) adds over simple physicochemical properties
+- For Logistic Regression only, descriptors are standardized with `StandardScaler` (RF/XGB are invariant to monotonic feature scaling, so they use the raw descriptors)
 
 **3. Combined (ECFP + Descriptors)**
 - The two feature sets above concatenated into a single 1039-dimensional matrix, evaluated in two variants:
-  - **Combined_Naive**: concatenated as-is, no scaling
-  - **Combined_Scaled**: descriptors standardized with `StandardScaler` (fit on the outer training fold only, to avoid leakage), ECFP bits left untouched since they are already binary
+  - **Combined_Naive**: concatenated as-is, no scaling, for all three models
+  - **Combined_Scaled**: for Logistic Regression only, descriptors are standardized (`StandardScaler`), ECFP bits left untouched since they are already binary; RF/XGB use the same unscaled pipeline as Combined_Naive
+- Scaling is implemented as a step inside an sklearn `Pipeline` (`preprocess/scaling.py`'s `DescriptorOnlyScaler`), so `GridSearchCV` clones and re-fits it independently on every inner cross-validation fold — no fold's distribution (inner validation or outer test) leaks into the scaler's fitted mean/std
 - Tree-based models (RF/XGB) are expected to be invariant to this scaling by construction; the comparison mainly matters for Logistic Regression, where unscaled descriptors (e.g. MolWt ≈ 300) and binary ECFP bits (0/1) would otherwise distort L2-regularized coefficient estimates
 - Used to test whether descriptors provide complementary information beyond what ECFP already captures
+
+---
+
+## Sample consistency across feature sets
+
+Before feature extraction, all SMILES strings are validated once with RDKit (`preprocess/clean_data.py`'s `filter_valid_smiles`), and any row that fails to parse is dropped from a shared, cleaned copy of the dataset. ECFP, Descriptors, and Combined are all extracted from this same cleaned dataset, so all four feature sets are guaranteed to be evaluated on an identical set of compounds — comparisons between feature sets are not confounded by different molecules silently being dropped by one representation but not another.
 
 ---
 
@@ -206,79 +214,114 @@ Example:
 
 ```bash
 git clone https://github.com/OAO1211/AI-Toxicity-Predictor.git
+cd AI-Toxicity-Predictor
+```
 
-cd dili_ml_projectInstall dependencies
+## Install dependencies
+
+```bash
 pip install -r requirements.txt
-RDKit Installation
+```
+
+### RDKit Installation
+
 RDKit is recommended to install through Conda:
+
+```bash
 conda install -c conda-forge rdkit
-Usage
+```
+
+## Usage
+
 Run the complete pipeline:
+
+```bash
 python run_pipeline.py
+```
+
 The pipeline will automatically perform:
-Molecular fingerprint generation
-Dataset loading
-Model training
-Hyperparameter optimization
-5-fold cross-validation
-SHAP calculation
-Fragment extraction
-Visualization generation
-Results
-After running the pipeline, the following outputs will be generated, separately under results/<dataset_name>/ECFP/ and results/<dataset_name>/Descriptors/:
-Model Evaluation
+- Molecular fingerprint / descriptor generation
+- Dataset loading
+- Model training
+- Hyperparameter optimization
+- Nested 5-fold cross-validation
+- SHAP calculation
+- Fragment extraction (ECFP only)
+- Visualization generation
+
+# Results
+
+After running the pipeline, the following outputs will be generated, separately under `results/<dataset_name>/ECFP/`, `.../Descriptors/`, `.../Combined_Naive/`, and `.../Combined_Scaled/`:
+
+## Model Evaluation
+
 Examples:
-ROC-AUC
-PR-AUC
-Balanced Accuracy
-F1-score
-Precision / Recall
-Confusion matrix
-SHAP Outputs
+- ROC-AUC
+- PR-AUC
+- Balanced Accuracy
+- F1-score
+- Precision / Recall
+- Confusion matrix
+
+## SHAP Outputs
+
 Generated files:
-training_shap.tsv
+- `training_shap.tsv`
+- `testing_shap.tsv`
+- `mean_abs_shap.tsv`
 
-testing_shap.tsv
+## Fragment Visualization (ECFP only)
 
-mean_abs_shap.tsv
-Fragment Visualization (ECFP only)
 Important molecular fragments identified by SHAP are converted back into chemical structures using RDKit. Descriptors don't have a bit-to-substructure mapping, so this step only runs for the ECFP feature set.
+
+**Note:** fragment visualization is generated from the fold-1 SHAP results only, as a representative example rather than a pooled estimate across all 5 outer folds. Treat it as illustrative, not as a definitive ranking of important substructures — a more rigorous version would aggregate bit importance across all folds before mapping to fragments.
+
 Example output:
+```
 results/<dataset_name>/ECFP/
-
 └── fragments/
-
     ├── RF/
-
     ├── XGB/
-
     └── LogReg/
-Feature Set Comparison
-results/comparison/metrics_summary.csv aggregates all folds, grouped by FeatureSet + Model (mean ± std), across all four feature sets (ECFP / Descriptors / Combined_Naive / Combined_Scaled) and all three models, so they can be compared side by side.
-Future Development
+```
+
+## Feature Set Comparison
+
+`results/comparison/metrics_summary.csv` aggregates all folds, grouped by FeatureSet + Model (mean ± std), across all four feature sets (ECFP / Descriptors / Combined_Naive / Combined_Scaled) and all three models, so they can be compared side by side.
+
+# Future Development
+
 Future improvements include:
-Integration of molecular graph neural networks (GNN)
-Integration of pharmacokinetic and ADMET features
-Larger DILI benchmark datasets
-Deployment as an interactive prediction platform
-Research Direction
+- Integration of molecular graph neural networks (GNN)
+- Integration of pharmacokinetic and ADMET features
+- Larger DILI benchmark datasets
+- Deployment as an interactive prediction platform
+
+# Research Direction
+
 This project explores the intersection of:
-Artificial Intelligence
-Computational Chemistry
-Drug Discovery
-Explainable Machine Learning
+- Artificial Intelligence
+- Computational Chemistry
+- Drug Discovery
+- Explainable Machine Learning
+
 The long-term goal is to develop AI systems capable of assisting early-stage drug development by predicting molecular risks and providing interpretable chemical insights.
-Requirements
+
+# Requirements
+
 Main dependencies:
-numpy
-pandas
-scikit-learn
-rdkit
-xgboost
-shap
-matplotlib
-seaborn
-openpyxl
-See requirements.txt for the complete environment.
-License
+- numpy
+- pandas
+- scikit-learn
+- rdkit
+- xgboost
+- shap
+- matplotlib
+- seaborn
+- openpyxl
+
+See `requirements.txt` for the complete environment.
+
+# License
+
 MIT License
