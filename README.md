@@ -32,10 +32,16 @@ The goal is not only to predict toxicity risk, but also to provide **chemically 
                     v                                  v
           ECFP Molecular Fingerprints      Physicochemical Descriptors
                     |                                  |
-                    └────────────────┬─────────────────┘
-                                      v
+                    |                    ┌─────────────┴─────────────┐
+                    |                    v                           v
+                    |         Combined_Naive              Combined_Scaled
+                    |         (concat, no scaling)   (concat, descriptors standardized)
+                    |                    |                           |
+                    └───────┬────────────┴─────────────┬─────────────┘
+                             v                          v
                      Machine Learning Classification
                 (Random Forest / XGBoost / Logistic Regression)
+                     — each of the 4 feature sets evaluated independently —
                                       |
                                       v
                      Nested 5-fold Cross-validation
@@ -48,7 +54,7 @@ The goal is not only to predict toxicity risk, but also to provide **chemically 
                 Molecular Fragment Interpretation (ECFP only)
                                       |
                                       v
-                  ECFP vs Descriptors Performance Comparison
+        ECFP vs Descriptors vs Combined Performance Comparison
  
 ---
 
@@ -56,7 +62,7 @@ The goal is not only to predict toxicity risk, but also to provide **chemically 
 
 ## Molecular Feature Extraction
 
-Two independent feature representations are extracted from SMILES and evaluated separately, as a baseline comparison:
+Two independent feature representations are extracted from SMILES, evaluated separately, and then combined into a third feature set:
 
 **1. ECFP (Extended Connectivity Fingerprints)**
 - Convert SMILES strings into molecular fingerprints using RDKit
@@ -70,6 +76,13 @@ ECFP bits = 1024
 - 15 classic RDKit-computed descriptors: MolWt, ExactMolWt, MolLogP, TPSA, HBD, HBA, RotatableBonds, RingCount, AromaticRings, AliphaticRings, HeavyAtoms, FractionCSP3, MolMR, LabuteASA, BertzCT
 - Low-dimensional, human-interpretable, no bit-hashing collisions
 - Used as a baseline to quantify how much predictive value the high-dimensional structural fingerprint (ECFP) adds over simple physicochemical properties
+
+**3. Combined (ECFP + Descriptors)**
+- The two feature sets above concatenated into a single 1039-dimensional matrix, evaluated in two variants:
+  - **Combined_Naive**: concatenated as-is, no scaling
+  - **Combined_Scaled**: descriptors standardized with `StandardScaler` (fit on the outer training fold only, to avoid leakage), ECFP bits left untouched since they are already binary
+- Tree-based models (RF/XGB) are expected to be invariant to this scaling by construction; the comparison mainly matters for Logistic Regression, where unscaled descriptors (e.g. MolWt ≈ 300) and binary ECFP bits (0/1) would otherwise distort L2-regularized coefficient estimates
+- Used to test whether descriptors provide complementary information beyond what ECFP already captures
 
 ---
 
@@ -147,12 +160,12 @@ dili_ml_project/
 │   └── train_logreg.py
 ├── evaluation/
 │   ├── cross_validation.py
-│   └── metrics.py
+│   └── aggregate_metrics.py
 ├── explain/
-│   ├── shap_analysis.py
-│   └── shap_to_fragments.py
+│   └── shap_analysis.py
 ├── preprocess/
-│   └── clean_data.py
+│   ├── clean_data.py
+│   └── scaling.py
 ├── visualization/
 │   ├── draw_fragments.py
 │   └── plot_shap.py
@@ -240,12 +253,11 @@ results/<dataset_name>/ECFP/
     ├── XGB/
 
     └── LogReg/
-ECFP vs Descriptors Comparison
-results/comparison/metrics_summary.csv aggregates all folds, grouped by FeatureSet + Model (mean ± std), so ECFP and Descriptors results can be compared side by side for every model.
+Feature Set Comparison
+results/comparison/metrics_summary.csv aggregates all folds, grouped by FeatureSet + Model (mean ± std), across all four feature sets (ECFP / Descriptors / Combined_Naive / Combined_Scaled) and all three models, so they can be compared side by side.
 Future Development
 Future improvements include:
 Integration of molecular graph neural networks (GNN)
-Combined ECFP + physicochemical descriptor feature sets (to test whether descriptors add complementary information beyond structural fingerprints, after the current ECFP-only vs descriptors-only comparison)
 Integration of pharmacokinetic and ADMET features
 Larger DILI benchmark datasets
 Deployment as an interactive prediction platform
