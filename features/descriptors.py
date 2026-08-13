@@ -92,7 +92,7 @@ def extract_descriptor_features(
     Generate descriptor table from SMILES.
     """
 
-    df = pd.read_csv(input_path)
+    df = pd.read_csv(input_path, sep=',', encoding='latin1')
 
     rows = []
 

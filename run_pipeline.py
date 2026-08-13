@@ -6,6 +6,8 @@ import argparse
 import functools
 from glob import glob
 
+import pandas as pd
+
 from evaluation.aggregate_metrics import aggregate_model_metrics
 
 BASE_DIR = os.path.dirname(
@@ -31,7 +33,9 @@ from config import (
     TOP_SHAP_BITS,
     MODEL_CONFIGS,
     FEATURE_SET_ECFP,
-    FEATURE_SET_DESCRIPTORS
+    FEATURE_SET_DESCRIPTORS,
+    FEATURE_SET_COMBINED_NAIVE,
+    FEATURE_SET_COMBINED_SCALED
 )
 
 
@@ -48,6 +52,13 @@ from features.descriptors import extract_descriptor_features
 # =========================
 
 from data_loader import load_data
+
+
+# =========================
+# Feature scaling (for Combined_Scaled)
+# =========================
+
+from preprocess.scaling import make_descriptor_scaler_transform
 
 
 # =========================
@@ -82,6 +93,13 @@ from visualization.draw_fragments import (
 
 RESULTS_DIR_QUICK = RESULTS_DIR + "_quicktest"
 
+ALL_FEATURE_SETS = [
+    FEATURE_SET_ECFP,
+    FEATURE_SET_DESCRIPTORS,
+    FEATURE_SET_COMBINED_NAIVE,
+    FEATURE_SET_COMBINED_SCALED
+]
+
 
 def _run_models_for_feature_set(
     ids,
@@ -92,19 +110,24 @@ def _run_models_for_feature_set(
     feature_set_name,
     do_fragment_extraction,
     model_names,
-    quick_mode
+    quick_mode,
+    feature_transform_fn=None
 ):
     """
-    對單一特徵集合 (ECFP 或 Descriptors) 跑過指定的模型：
-    nested CV + SHAP，並視情況（只有 ECFP）額外做 SHAP bit -> 化學片段 還原。
+    對單一特徵集合跑過指定的模型：nested CV + SHAP，
+    並視情況（只有 ECFP）額外做 SHAP bit -> 化學片段 還原。
 
     output_dir 應該已經是「這個特徵集合專屬」的資料夾，例如：
-    results/<dataset_name>/ECFP 或 results/<dataset_name>/Descriptors
-    這樣 ECFP 和 Descriptors 底下同名的模型資料夾（RF / XGB / LogReg）
-    才不會互相覆蓋，evaluation/aggregate_metrics.py 也才能正確區分兩者。
+    results/<dataset_name>/ECFP、.../Descriptors、
+    .../Combined_Naive、.../Combined_Scaled
+    這樣底下同名的模型資料夾（RF / XGB / LogReg）才不會互相覆蓋，
+    evaluation/aggregate_metrics.py 也才能正確區分四者。
 
     model_names: 只跑這個清單裡的模型名稱（例如 quick smoke test 時只跑 ["LogReg"]）
     quick_mode: 傳給 grid_search_fn，True 時只用單一參數組合（僅供流程測試）
+    feature_transform_fn: 選填，傳給 run_5fold_cv 做 fold 內部的前處理
+                           （目前只有 Combined_Scaled 會用到，對 descriptors 做
+                           StandardScaler，ECFP bits 維持 0/1）
     """
 
     os.makedirs(output_dir, exist_ok=True)
@@ -112,7 +135,7 @@ def _run_models_for_feature_set(
     for model_name in model_names:
 
         if model_name not in MODEL_CONFIGS:
-            print(f"[WARN] Unknown model '{model_name}', skipped. - run_pipeline.py:115")
+            print(f"[WARN] Unknown model '{model_name}', skipped. - run_pipeline.py:138")
             continue
 
         cfg = MODEL_CONFIGS[model_name]
@@ -152,13 +175,15 @@ def _run_models_for_feature_set(
             y=y,
             output_dir=output_dir,
             model_name=model_name,
-            model_type=cfg["model_type"]
+            model_type=cfg["model_type"],
+            feature_transform_fn=feature_transform_fn
         )
 
         if not do_fragment_extraction:
-            # Descriptors 是連續的物理化學數值（分子量、TPSA...），
-            # 沒有像 ECFP bit 那樣「bit index -> 結構片段」的對應關係，
-            # 所以不做 fragment 還原/繪圖，只保留上面的 SHAP 表格即可。
+            # Descriptors / Combined 系列沒有做 bit -> fragment 還原：
+            # Descriptors 是連續數值，本來就沒有 bit 對應關係；
+            # Combined 雖然含有 ECFP bits，但目前先聚焦在整體效能比較，
+            # fragment 解釋留給 ECFP-only 那組結果。
             continue
 
         # -------------------------
@@ -227,14 +252,15 @@ def run_pipeline(
     quick_mode: True 時，grid search 只用單一參數組合，且結果會寫到
                 results_quicktest/（不是 results/），避免污染正式結果。
                 僅用於確認整條 pipeline 能不能跑完，不可用於正式報告。
-    feature_sets: 要跑的特徵集合，預設 ["ECFP", "Descriptors"]
-                  可以只跑 ["Descriptors"] 做 smoke test。
+    feature_sets: 要跑的特徵集合，預設全部四種：
+                  ECFP / Descriptors / Combined_Naive / Combined_Scaled
+                  可以只跑其中幾種做 smoke test。
     model_names: 要跑的模型，預設 MODEL_CONFIGS 的全部 key（RF/XGB/LogReg）
                  可以只跑 ["LogReg"] 做 smoke test。
     """
 
     if feature_sets is None:
-        feature_sets = [FEATURE_SET_ECFP, FEATURE_SET_DESCRIPTORS]
+        feature_sets = list(ALL_FEATURE_SETS)
 
     if model_names is None:
         model_names = list(MODEL_CONFIGS.keys())
@@ -289,6 +315,11 @@ def run_pipeline(
             "No dataset found in data/raw/"
         )
 
+    need_combined = (
+        FEATURE_SET_COMBINED_NAIVE in feature_sets
+        or FEATURE_SET_COMBINED_SCALED in feature_sets
+    )
+
     # =========================
     # Process datasets
     # =========================
@@ -321,11 +352,20 @@ def run_pipeline(
             exist_ok=True
         )
 
+        ecfp_ids, ecfp_X, ecfp_y = None, None, None
+        desc_ids, desc_X, desc_y = None, None, None
+
         # =========================
         # Feature set 1: ECFP
         # =========================
+        #
+        # Combined 系列需要用到 ECFP 的特徵矩陣，所以只要
+        # ECFP / Combined_Naive / Combined_Scaled 任一個有被要求，就要產生。
 
-        if FEATURE_SET_ECFP in feature_sets:
+        if (
+            FEATURE_SET_ECFP in feature_sets
+            or need_combined
+        ):
 
             ecfp_path = os.path.join(
                 FEATURE_DIR,
@@ -357,6 +397,8 @@ def run_pipeline(
                 f"Features: {ecfp_X.shape[1]}"
             )
 
+        if FEATURE_SET_ECFP in feature_sets:
+
             _run_models_for_feature_set(
                 ids=ecfp_ids,
                 X=ecfp_X,
@@ -373,7 +415,10 @@ def run_pipeline(
         # Feature set 2: Descriptors (baseline)
         # =========================
 
-        if FEATURE_SET_DESCRIPTORS in feature_sets:
+        if (
+            FEATURE_SET_DESCRIPTORS in feature_sets
+            or need_combined
+        ):
 
             descriptors_path = os.path.join(
                 FEATURE_DIR,
@@ -403,6 +448,8 @@ def run_pipeline(
                 f"Features: {desc_X.shape[1]}"
             )
 
+        if FEATURE_SET_DESCRIPTORS in feature_sets:
+
             _run_models_for_feature_set(
                 ids=desc_ids,
                 X=desc_X,
@@ -416,10 +463,104 @@ def run_pipeline(
             )
 
         # =========================
+        # Feature set 3 & 4: Combined (ECFP + Descriptors)
+        # =========================
+
+        if need_combined:
+
+            print(
+                "\n[STEP 3] Building combined ECFP + Descriptors "
+                "feature matrix..."
+            )
+
+            # 兩份特徵檔案是分別對同一份原始資料跑 RDKit 產生的，
+            # 理論上 row 順序/數量會一致，但這裡明確檢查一次，
+            # 對不上就直接中止，避免默默地把不同分子的 ECFP 和
+            # descriptors 錯誤配對在一起。
+            if (
+                len(ecfp_ids) != len(desc_ids)
+                or list(ecfp_ids) != list(desc_ids)
+            ):
+                raise ValueError(
+                    "ECFP 和 Descriptors 的樣本 (ids) 對不起來，"
+                    "無法直接橫向合併成 Combined 特徵。可能是某些 SMILES "
+                    "在其中一邊解析失敗、但在另一邊成功，導致兩邊筆數或"
+                    "順序不同。請檢查 features/ecfp.py 與 "
+                    "features/descriptors.py 印出的 [WARNING] 訊息。"
+                )
+
+            combined_ids = ecfp_ids
+
+            combined_X = pd.concat(
+                [
+                    ecfp_X.reset_index(drop=True),
+                    desc_X.reset_index(drop=True)
+                ],
+                axis=1
+            )
+
+            combined_y = ecfp_y.reset_index(drop=True)
+
+            print(
+                f"[INFO] Combined - Samples: {combined_X.shape[0]}, "
+                f"Features: {combined_X.shape[1]} "
+                f"(ECFP {ecfp_X.shape[1]} + Descriptors {desc_X.shape[1]})"
+            )
+
+            # -------------------------
+            # 3a. Naive Combined：直接串接，不做任何 scaling
+            # -------------------------
+
+            if FEATURE_SET_COMBINED_NAIVE in feature_sets:
+
+                _run_models_for_feature_set(
+                    ids=combined_ids,
+                    X=combined_X,
+                    y=combined_y,
+                    output_dir=os.path.join(
+                        dataset_out,
+                        FEATURE_SET_COMBINED_NAIVE
+                    ),
+                    data_path=data_path,
+                    feature_set_name=FEATURE_SET_COMBINED_NAIVE,
+                    do_fragment_extraction=False,
+                    model_names=model_names,
+                    quick_mode=quick_mode,
+                    feature_transform_fn=None
+                )
+
+            # -------------------------
+            # 3b. Controlled Combined：只對 descriptors 做 StandardScaler
+            # （在每個 outer fold 內部才 fit，避免資訊洩漏）
+            # -------------------------
+
+            if FEATURE_SET_COMBINED_SCALED in feature_sets:
+
+                descriptor_scaler_fn = make_descriptor_scaler_transform(
+                    combined_X.columns
+                )
+
+                _run_models_for_feature_set(
+                    ids=combined_ids,
+                    X=combined_X,
+                    y=combined_y,
+                    output_dir=os.path.join(
+                        dataset_out,
+                        FEATURE_SET_COMBINED_SCALED
+                    ),
+                    data_path=data_path,
+                    feature_set_name=FEATURE_SET_COMBINED_SCALED,
+                    do_fragment_extraction=False,
+                    model_names=model_names,
+                    quick_mode=quick_mode,
+                    feature_transform_fn=descriptor_scaler_fn
+                )
+
+        # =========================
         # Aggregate all metrics
         # =========================
 
-        print("\n[STEP 3] Aggregate metrics... - run_pipeline.py:422")
+        print("\n[STEP 4] Aggregate metrics... - run_pipeline.py:563")
 
         aggregate_model_metrics(
             results_dir=results_dir,
@@ -462,8 +603,9 @@ def _parse_args():
         type=str,
         default=None,
         help=(
-            "要跑的特徵集合，逗號分隔，例如 --feature-sets Descriptors "
-            "或 --feature-sets ECFP,Descriptors（預設兩者都跑）"
+            "要跑的特徵集合，逗號分隔，可選值："
+            "ECFP, Descriptors, Combined_Naive, Combined_Scaled "
+            "（預設全部都跑）"
         )
     )
 

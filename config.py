@@ -96,6 +96,17 @@ FEATURE_SET_ECFP = "ECFP"
 
 FEATURE_SET_DESCRIPTORS = "Descriptors"
 
+# Combined = ECFP + Descriptors 串接。分兩層：
+# Naive：直接串接，不做任何 scaling（RF/XGB 對 scaling 不敏感，這層對它們才是真正的結果；
+#        但對 LogReg 而言，descriptors 跟 0/1 的 ECFP bits 尺度差很多，會讓 L2 regularization
+#        的係數解讀失真）
+# Scaled：只對 15 個 descriptors 做 StandardScaler（ECFP bits 維持 0/1），
+#         主要是為了讓 LogReg 的比較公平；RF/XGB 理論上應該跟 Naive 幾乎一樣，
+#         可以拿來當作「scaling 只影響線性模型」的 sanity check。
+FEATURE_SET_COMBINED_NAIVE = "Combined_Naive"
+
+FEATURE_SET_COMBINED_SCALED = "Combined_Scaled"
+
 
 
 

@@ -25,7 +25,26 @@ Thumbs.db
 *.log
 
 # Results
-results/
+# Ignore generated results by default
+results/**
+
+# Keep reproducible numerical results
+!results/comparison/
+!results/comparison/*.csv
+
+# Keep model parameters
+!results/**/best_params.json
+
+# Keep predictions
+!results/**/predictions.csv
+
+# Keep SHAP numerical results
+!results/**/mean_abs_shap.tsv
+!results/**/training_shap.tsv
+!results/**/testing_shap.tsv
+
+# Ignore generated visualizations
+results/**/*.png
 
 # Keep README example figures
 !results/examples/

@@ -24,7 +24,8 @@ def run_5fold_cv(
     y,
     output_dir,
     model_name,
-    model_type="rf"
+    model_type="rf",
+    feature_transform_fn=None
 ):
     """
     builder: 呼叫方式為 builder(**best_params) -> sklearn/xgboost estimator
@@ -35,6 +36,12 @@ def run_5fold_cv(
     這是為了避免「先在全部資料上做 grid search，再用同一份資料做 CV 評估」
     所造成的資訊洩漏（outer test fold 間接影響了超參數選擇），
     也就是正確做法的 nested cross-validation。
+
+    feature_transform_fn: 選填，呼叫方式為
+    feature_transform_fn(X_train, X_test) -> (X_train_transformed, X_test_transformed)
+    用來做 fold 內部的特徵前處理（例如 Combined 特徵集合裡，只對
+    physicochemical descriptors 做 StandardScaler、ECFP bits 維持原樣），
+    一定只用該 fold 的 X_train 去 fit，避免 test fold 的分布資訊外洩。
     """
 
     skf = StratifiedKFold(
@@ -72,6 +79,19 @@ def run_5fold_cv(
 
         train_ids = np.array(ids)[train_idx]
         test_ids = np.array(ids)[test_idx]
+
+
+        # -------------------------
+        # Optional per-fold feature transform (e.g. descriptor scaling)
+        # 只用這個 fold 的 X_train 去 fit，X_test 只做 transform，
+        # 避免 test fold 的資訊洩漏進前處理步驟。
+        # -------------------------
+
+        if feature_transform_fn is not None:
+            X_train, X_test = feature_transform_fn(
+                X_train,
+                X_test
+            )
 
 
         # -------------------------

@@ -29,7 +29,14 @@ def bit_to_fragment(smiles: str, bit_indices: List[int], radius: int = 3, n_bits
     for bit in bit_indices:
         if bit in info:
             for atom_idx, r in info[bit]:
-                submol = Chem.PathToSubmol(mol, Chem.FindAtomEnvironmentOfRadiusN(mol, r, atom_idx))
+                try:
+                    submol = Chem.PathToSubmol(mol, Chem.FindAtomEnvironmentOfRadiusN(mol, r, atom_idx))
+                except Exception:
+                    # RDKit 在還原子結構時偶爾會因為不合法的
+                    # aromaticity/kekulization 而丟出例外，
+                    # 這裡不讓整個流程中斷，用 None 標記「這個 bit
+                    # 在這個分子上還原失敗」
+                    submol = None
                 fragments[bit] = submol
                 break
     return fragments
@@ -82,27 +89,59 @@ def extract_top_shap_fragments(
     top_bits = mean_abs_shap.sort_values(ascending=False).head(top_n).index
     top_bit_indices = [int(b.replace("ECFP_", "")) for b in top_bits]
 
-    print(f"[INFO] Top {top_n} SHAP bits: {top_bit_indices} - bit_mapping.py:85")
+    print(f"[INFO] Top {top_n} SHAP bits: {top_bit_indices} - bit_mapping.py:92")
 
     # bit -> fragment
     all_fragments = []
+    # 追蹤每個 top bit 是否曾經在資料集中還原出「合法」的 fragment
+    # （FragmentSMILES 不是 None），用來判斷要不要在最後補一列警告
+    bit_has_valid_fragment = {bit: False for bit in top_bit_indices}
+
     for idx, row in dataset_df.iterrows():
         smiles = row["SMILES"]
         name = row.get("CompoundName", f"sample_{idx}")
         frags = bit_to_fragment(smiles, top_bit_indices, radius=radius, n_bits=n_bits)
         for bit, mol in frags.items():
+            fragment_smiles = Chem.MolToSmiles(mol) if mol else None
+            if fragment_smiles is not None:
+                bit_has_valid_fragment[bit] = True
             all_fragments.append({
                 "CompoundName": name,
                 "SMILES": smiles,
                 "BitIndex": bit,
-                "FragmentSMILES": Chem.MolToSmiles(mol) if mol else None
+                "FragmentSMILES": fragment_smiles,
+                "Note": "" if fragment_smiles is not None else
+                        "RDKit 無法從這個分子還原出合法子結構"
             })
         # 存圖
         save_fragments_as_png(frags, os.path.join(output_dir, "pngs"), prefix=name)
+
+    # 對完全沒有還原出任何合法 fragment 的 top bit，明確補一列，
+    # 而不是讓它從輸出裡悄悄消失。這種情況常見於 ECFP bit collision：
+    # 不同子結構被雜湊進同一個 bit index，導致模型認為這個 bit 很重要
+    # (mean |SHAP| 高)，但反推不出一個穩定、單一的化學子結構。
+    for bit in top_bit_indices:
+        if not bit_has_valid_fragment[bit]:
+            all_fragments.append({
+                "CompoundName": None,
+                "SMILES": None,
+                "BitIndex": bit,
+                "FragmentSMILES": None,
+                "Note": (
+                    "在整個資料集裡都沒有還原出合法的子結構"
+                    "（可能是 ECFP bit collision：多個不同子結構"
+                    "共用同一個 bit index，建議在報告中列為 "
+                    "unresolved / 或考慮增加 n_bits 降低碰撞率）"
+                )
+            })
+            print(
+                f"[WARN] Bit {bit} 在整個資料集裡沒有還原出合法子結構"
+                f" - bit_mapping.py"
+            )
 
     frag_df = pd.DataFrame(all_fragments)
     os.makedirs(output_dir, exist_ok=True)
     frag_df.to_csv(os.path.join(output_dir, "top_shap_fragments.tsv"), sep='\t', index=False)
 
-    print(f"[✓] Fragments saved to {output_dir}/top_shap_fragments.tsv - bit_mapping.py:107")
-    print(f"[✓] Fragment images saved to {output_dir}/pngs/ - bit_mapping.py:108")
+    print(f"[✓] Fragments saved to {output_dir}/top_shap_fragments.tsv - bit_mapping.py:146")
+    print(f"[✓] Fragment images saved to {output_dir}/pngs/ - bit_mapping.py:147")
