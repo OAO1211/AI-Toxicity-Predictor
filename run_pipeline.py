@@ -23,6 +23,7 @@ sys.path.append(BASE_DIR)
 
 from config import (
     RAW_DATA_DIR,
+    CURATED_DATA_DIR,
     FEATURE_DIR,
     RESULTS_DIR,
     LABEL_COL,
@@ -30,12 +31,19 @@ from config import (
     SMILES_COL,
     ECFP_RADIUS,
     ECFP_BITS,
+    ECFP_USE_CHIRALITY,
     TOP_SHAP_BITS,
     MODEL_CONFIGS,
     FEATURE_SET_ECFP,
     FEATURE_SET_DESCRIPTORS,
     FEATURE_SET_COMBINED_NAIVE,
-    FEATURE_SET_COMBINED_SCALED
+    FEATURE_SET_COMBINED_SCALED,
+    ERROR_FP_HIGH_CONF_THRESHOLD,
+    ERROR_FN_HIGH_CONF_THRESHOLD,
+    TOP_SHAP_BITS_PER_COMPOUND,
+    SIMILARITY_TOP_K,
+    SIMILARITY_LABEL_MISMATCH_THRESHOLD,
+    TOP_N_WORST_ERRORS
 )
 
 
@@ -53,12 +61,26 @@ from features.descriptors import extract_descriptor_features
 
 from data_loader import load_data
 
+from preprocess.prepare_final_dataset import prepare_final_datasets
+
 
 # =========================
 # Feature scaling (for Combined_Scaled)
 # =========================
+#
+# NOTE: Combined_Scaled no longer pre-scales descriptors at the outer
+# fold level (see _run_models_for_feature_set / use_scaler below) —
+# scaling now happens INSIDE the sklearn Pipeline that GridSearchCV
+# itself clones per inner fold, via model_selection.grid_search's
+# use_scaler=True / make_scaled_builder. This fixes a preprocessing
+# leak: fitting a scaler once on the whole outer-training set and
+# reusing it across all inner CV folds lets the scaler's mean/SD see
+# inner-validation-fold rows during the hyperparameter search, even
+# though outer test data was correctly excluded. Scaling inside the
+# Pipeline means GridSearchCV fits a fresh scaler on ONLY each inner
+# fold's training rows.
 
-from preprocess.scaling import make_descriptor_scaler_transform
+from model_selection.grid_search import make_scaled_builder
 
 
 # =========================
@@ -87,6 +109,13 @@ from visualization.draw_fragments import (
 
 
 # =========================
+# Prediction Error Analysis (Chapter 4)
+# =========================
+
+from evaluation.error_analysis import run_error_analysis_for_model
+
+
+# =========================
 # Quick-mode results 另外放一個資料夾，
 # 避免流程測試的結果不小心跟正式結果混在一起、污染 metrics_summary.csv
 # =========================
@@ -111,7 +140,7 @@ def _run_models_for_feature_set(
     do_fragment_extraction,
     model_names,
     quick_mode,
-    feature_transform_fn=None
+    use_scaler=False
 ):
     """
     對單一特徵集合跑過指定的模型：nested CV + SHAP，
@@ -125,9 +154,17 @@ def _run_models_for_feature_set(
 
     model_names: 只跑這個清單裡的模型名稱（例如 quick smoke test 時只跑 ["LogReg"]）
     quick_mode: 傳給 grid_search_fn，True 時只用單一參數組合（僅供流程測試）
-    feature_transform_fn: 選填，傳給 run_5fold_cv 做 fold 內部的前處理
-                           （目前只有 Combined_Scaled 會用到，對 descriptors 做
-                           StandardScaler，ECFP bits 維持 0/1）
+    use_scaler: 目前只有 Combined_Scaled 會傳 True。為 True 時：
+                - builder 會被 make_scaled_builder 包成
+                  Pipeline([("scaler", DescriptorOnlyScaler()), ("clf", ...)])
+                - grid_search_fn 會加上 use_scaler=True，讓
+                  model_selection.grid_search.run_grid_search 用同樣的
+                  Pipeline 結構做 inner CV
+                兩邊都是 Pipeline，GridSearchCV 才會在每個 inner fold
+                自動 clone + 重新 fit scaler，scaler 不會看到該 inner
+                fold 的 validation rows —— 這是嚴格定義下的 nested CV，
+                取代舊版「先在整個 outer training set fit 一次 scaler」
+                的做法。
     """
 
     os.makedirs(output_dir, exist_ok=True)
@@ -135,7 +172,7 @@ def _run_models_for_feature_set(
     for model_name in model_names:
 
         if model_name not in MODEL_CONFIGS:
-            print(f"[WARN] Unknown model '{model_name}', skipped. - run_pipeline.py:138")
+            print(f"[WARN] Unknown model '{model_name}', skipped. - run_pipeline.py:175")
             continue
 
         cfg = MODEL_CONFIGS[model_name]
@@ -162,13 +199,21 @@ def _run_models_for_feature_set(
             "[STEP] 5-fold nested CV (grid search + SHAP)..."
         )
 
+        builder = cfg["builder"]
+
+        grid_search_kwargs = {"quick_mode": quick_mode}
+
+        if use_scaler:
+            builder = make_scaled_builder(builder)
+            grid_search_kwargs["use_scaler"] = True
+
         grid_search_fn = functools.partial(
             cfg["grid_search"],
-            quick_mode=quick_mode
+            **grid_search_kwargs
         )
 
         run_5fold_cv(
-            builder=cfg["builder"],
+            builder=builder,
             grid_search_fn=grid_search_fn,
             ids=ids,
             X=X,
@@ -176,7 +221,42 @@ def _run_models_for_feature_set(
             output_dir=output_dir,
             model_name=model_name,
             model_type=cfg["model_type"],
-            feature_transform_fn=feature_transform_fn
+            feature_transform_fn=None,
+            feature_set_name=feature_set_name
+        )
+
+        # -------------------------
+        # Prediction Error Analysis (Chapter 4)
+        # -------------------------
+        #
+        # Runs for every feature set / model: FP/FN classification and
+        # ranking always work; SHAP-fragment mapping and the structural
+        # similarity search additionally need ECFP_ columns, and are
+        # skipped gracefully (with a printed warning) when the feature
+        # set is Descriptors-only.
+
+        print(
+            "[STEP] Prediction error analysis (FP/FN, SHAP fragments, "
+            "similarity, summary)..."
+        )
+
+        raw_dataset_df = pd.read_csv(data_path, encoding="latin1")
+
+        run_error_analysis_for_model(
+            model_output_dir=os.path.join(output_dir, model_name),
+            dataset_df=raw_dataset_df,
+            id_col=NAME_COL,
+            smiles_col=SMILES_COL,
+            label_col=LABEL_COL,
+            fp_threshold=ERROR_FP_HIGH_CONF_THRESHOLD,
+            fn_threshold=ERROR_FN_HIGH_CONF_THRESHOLD,
+            top_n_shap_bits=TOP_SHAP_BITS_PER_COMPOUND,
+            similarity_top_k=SIMILARITY_TOP_K,
+            similarity_label_mismatch_threshold=SIMILARITY_LABEL_MISMATCH_THRESHOLD,
+            top_n_worst_errors=TOP_N_WORST_ERRORS,
+            ecfp_radius=ECFP_RADIUS,
+            ecfp_n_bits=ECFP_BITS,
+            ecfp_use_chirality=ECFP_USE_CHIRALITY
         )
 
         if not do_fragment_extraction:
@@ -194,11 +274,14 @@ def _run_models_for_feature_set(
             "[STEP] Extract SHAP fragments..."
         )
 
+        # Use the out-of-fold SHAP table (all 5 folds concatenated,
+        # one row per compound) rather than fold1's training_shap.tsv
+        # alone, so the dataset-wide Top-N fragment list isn't biased
+        # towards whatever happened to be in fold1's training split.
         shap_path = os.path.join(
             output_dir,
             model_name,
-            "fold1",
-            "training_shap.tsv"
+            "oof_shap.tsv"
         )
 
         fragment_dir = os.path.join(
@@ -218,7 +301,8 @@ def _run_models_for_feature_set(
             top_n=TOP_SHAP_BITS,
             output_dir=fragment_dir,
             radius=ECFP_RADIUS,
-            n_bits=ECFP_BITS
+            n_bits=ECFP_BITS,
+            use_chirality=ECFP_USE_CHIRALITY
         )
 
         # -------------------------
@@ -246,7 +330,9 @@ def _run_models_for_feature_set(
 def run_pipeline(
     quick_mode=False,
     feature_sets=None,
-    model_names=None
+    model_names=None,
+    dataset_variant="primary",
+    prepare_final=True
 ):
     """
     quick_mode: True 時，grid search 只用單一參數組合，且結果會寫到
@@ -257,6 +343,11 @@ def run_pipeline(
                   可以只跑其中幾種做 smoke test。
     model_names: 要跑的模型，預設 MODEL_CONFIGS 的全部 key（RF/XGB/LogReg）
                  可以只跑 ["LogReg"] 做 smoke test。
+    dataset_variant: primary / sensitivity / both。primary 是固定 450-compound
+                     DILIrank structure-available cohort；sensitivity 是預先定義的
+                     single-component + metal-free + MW<=1000 Da subset。
+    prepare_final: True 時先由 data/raw 的 source CSV 重新產生 label、做 QC，
+                   並把 frozen datasets 寫入 data/curated/。
     """
 
     if feature_sets is None:
@@ -299,21 +390,39 @@ def run_pipeline(
     )
 
     # =========================
-    # Find datasets
+    # Find / freeze datasets
     # =========================
 
-    dataset_files = glob(
-        os.path.join(
-            RAW_DATA_DIR,
-            "*.csv"
-        )
-    )
+    source_files = glob(os.path.join(RAW_DATA_DIR, "*.csv"))
 
-    if not dataset_files:
+    if not source_files:
+        raise ValueError("No dataset found in data/raw/")
 
+    if dataset_variant not in {"primary", "sensitivity", "both"}:
         raise ValueError(
-            "No dataset found in data/raw/"
+            "dataset_variant must be one of: primary, sensitivity, both"
         )
+
+    dataset_files = []
+
+    if prepare_final:
+        os.makedirs(CURATED_DATA_DIR, exist_ok=True)
+        for source_path in source_files:
+            frozen = prepare_final_datasets(
+                input_path=source_path,
+                output_dir=CURATED_DATA_DIR
+            )
+            if dataset_variant in {"primary", "both"}:
+                dataset_files.append(frozen["primary"])
+            if dataset_variant in {"sensitivity", "both"}:
+                dataset_files.append(frozen["sensitivity"])
+    else:
+        if dataset_variant != "primary":
+            raise ValueError(
+                "--no-prepare-final can only be used with the raw primary "
+                "dataset; sensitivity requires the frozen dataset preparer."
+            )
+        dataset_files = source_files
 
     need_combined = (
         FEATURE_SET_COMBINED_NAIVE in feature_sets
@@ -383,7 +492,8 @@ def run_pipeline(
                 label_col=LABEL_COL,
                 name_col=NAME_COL,
                 radius=ECFP_RADIUS,
-                n_bits=ECFP_BITS
+                n_bits=ECFP_BITS,
+                use_chirality=ECFP_USE_CHIRALITY
             )
 
             ecfp_ids, ecfp_X, ecfp_y, _ = load_data(
@@ -526,19 +636,19 @@ def run_pipeline(
                     do_fragment_extraction=False,
                     model_names=model_names,
                     quick_mode=quick_mode,
-                    feature_transform_fn=None
+                    use_scaler=False
                 )
 
             # -------------------------
-            # 3b. Controlled Combined：只對 descriptors 做 StandardScaler
-            # （在每個 outer fold 內部才 fit，避免資訊洩漏）
+            # 3b. Controlled Combined：只對 descriptors 做 StandardScaler,
+            # 透過 Pipeline(scaler + clf) 讓 GridSearchCV 在每個 inner
+            # fold 自動 clone + 重新 fit scaler（見
+            # model_selection.grid_search.run_grid_search /
+            # make_scaled_builder），而不是在 outer fold 開始時就先
+            # fit 一次、整個 inner CV 共用同一份 scaler statistics。
             # -------------------------
 
             if FEATURE_SET_COMBINED_SCALED in feature_sets:
-
-                descriptor_scaler_fn = make_descriptor_scaler_transform(
-                    combined_X.columns
-                )
 
                 _run_models_for_feature_set(
                     ids=combined_ids,
@@ -553,14 +663,14 @@ def run_pipeline(
                     do_fragment_extraction=False,
                     model_names=model_names,
                     quick_mode=quick_mode,
-                    feature_transform_fn=descriptor_scaler_fn
+                    use_scaler=True
                 )
 
         # =========================
         # Aggregate all metrics
         # =========================
 
-        print("\n[STEP 4] Aggregate metrics... - run_pipeline.py:563")
+        print("\n[STEP 4] Aggregate metrics... - run_pipeline.py:673")
 
         aggregate_model_metrics(
             results_dir=results_dir,
@@ -619,6 +729,26 @@ def _parse_args():
         )
     )
 
+    parser.add_argument(
+        "--dataset-variant",
+        choices=["primary", "sensitivity", "both"],
+        default="primary",
+        help=(
+            "primary=450 compound formal cohort; "
+            "sensitivity=single-component/metal-free/MW<=1000; "
+            "both=run both datasets."
+        )
+    )
+
+    parser.add_argument(
+        "--no-prepare-final",
+        action="store_true",
+        help=(
+            "Skip label regeneration / structure QC and use data/raw directly. "
+            "Not recommended for the formal v4 run."
+        )
+    )
+
     return parser.parse_args()
 
 
@@ -639,5 +769,7 @@ if __name__ == "__main__":
     run_pipeline(
         quick_mode=args.quick,
         feature_sets=feature_sets,
-        model_names=model_names
+        model_names=model_names,
+        dataset_variant=args.dataset_variant,
+        prepare_final=not args.no_prepare_final
     )

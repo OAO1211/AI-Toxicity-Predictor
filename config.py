@@ -48,6 +48,12 @@ FEATURE_DIR = os.path.join(
 )
 
 
+CURATED_DATA_DIR = os.path.join(
+    DATA_DIR,
+    "curated"
+)
+
+
 
 # Results
 
@@ -77,6 +83,16 @@ FRAGMENTS_DIR = os.path.join(
 
 
 LABEL_COL = "label"
+
+# Source DILIrank category. Final binary labels are regenerated from this
+# column so manual label drift (e.g. the legacy temsirolimus error) cannot
+# propagate into a formal run.
+SOURCE_DILI_COL = "vDILIConcern"
+
+DILI_LABEL_MAP = {
+    "vMost-DILI-Concern": 1,
+    "vNo-DILI-Concern": 0,
+}
 
 NAME_COL = "LabelCompoundName"
 
@@ -118,6 +134,15 @@ FEATURE_SET_COMBINED_SCALED = "Combined_Scaled"
 ECFP_RADIUS = 3
 
 ECFP_BITS = 1024
+
+# Final v4 representation is chirality-aware. This removes the five legacy
+# stereochemical fingerprint collisions found during the structure audit.
+ECFP_USE_CHIRALITY = True
+
+# Predeclared sensitivity subset: this does NOT replace the 450-compound
+# primary cohort. It is only used to test whether key findings persist in a
+# more conventional organic small-molecule region.
+SENSITIVITY_MAX_MW = 1000.0
 
 
 
@@ -222,3 +247,39 @@ MODEL_CONFIGS = {
 
 
 PLOT_TOP_N_SHAP = 20
+
+
+# =========================
+# Error analysis (Prediction Error Analysis / Chapter 4)
+# =========================
+#
+# High-confidence error thresholds on the OOF predicted probability
+# (probability of the positive / DILI class):
+#   False Positive (true=non-DILI, pred=DILI): pred_prob >= FP threshold
+#   False Negative (true=DILI, pred=non-DILI): pred_prob <= FN threshold
+
+ERROR_FP_HIGH_CONF_THRESHOLD = 0.8
+
+ERROR_FN_HIGH_CONF_THRESHOLD = 0.2
+
+# How many top |SHAP| ECFP bits to report per individual error compound
+# (item 4). Deliberately smaller than TOP_SHAP_BITS (which is a
+# dataset-wide aggregate), since this is per-compound.
+TOP_SHAP_BITS_PER_COMPOUND = 5
+
+# Top-K structurally similar compounds (Tanimoto on ECFP) to report per
+# high-confidence error compound (item 5).
+SIMILARITY_TOP_K = 5
+
+# Similarity threshold used for the "label disagreement among close
+# neighbors" statistic: for each high-confidence error compound, what
+# fraction of ALL compounds with Tanimoto similarity >= this threshold
+# have a DIFFERENT true label. Answers "structurally near-identical,
+# but different DILI outcome?" without being capped at Top-K.
+SIMILARITY_LABEL_MISMATCH_THRESHOLD = 0.7
+
+# How many of the worst errors (by |pred_prob - y_true|) to keep in
+# top_10_high_confidence_errors.tsv (item 9).
+TOP_N_WORST_ERRORS = 10
+
+ERROR_ANALYSIS_DIRNAME = "error_analysis"

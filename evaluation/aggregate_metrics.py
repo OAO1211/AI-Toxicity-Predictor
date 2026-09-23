@@ -1,195 +1,157 @@
-# evaluation/aggregate_metrics.py
+"""Variant-aware metrics aggregation for DILI v4.
 
-import os
+Run from project root:
+    python evaluation/aggregate_metrics.py
+
+or import:
+    aggregate_model_metrics(results_dir='results', output_path='results/comparison/metrics_summary.csv')
+
+The key fix is that primary and sensitivity_conventional are parsed from the
+result-directory name and kept as separate DatasetVariant groups.
+"""
+
+from __future__ import annotations
+
 import glob
-import pandas as pd
+import os
+import re
+from pathlib import Path
 
+import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
+    balanced_accuracy_score,
+    confusion_matrix,
+    f1_score,
     precision_score,
     recall_score,
-    f1_score,
     roc_auc_score,
-    average_precision_score,
-    balanced_accuracy_score
 )
 
 
 def calculate_metrics(y_true, y_prob, y_pred):
-
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
+    specificity = tn / (tn + fp) if (tn + fp) else float("nan")
     return {
-        "Accuracy":
-            accuracy_score(y_true, y_pred),
-
-        "BalancedAccuracy":
-            balanced_accuracy_score(y_true, y_pred),
-
-        "Precision":
-            precision_score(
-                y_true,
-                y_pred,
-                zero_division=0
-            ),
-
-        "Recall":
-            recall_score(
-                y_true,
-                y_pred,
-                zero_division=0
-            ),
-
-        "F1":
-            f1_score(
-                y_true,
-                y_pred,
-                zero_division=0
-            ),
-
-        "ROC-AUC":
-            roc_auc_score(
-                y_true,
-                y_prob
-            ),
-
-        # 資料集 label 分佈約 267:183（非完全平衡），
-        # PR-AUC 比 ROC-AUC 更能反映在少數類別（DILI 陽性）上的表現，
-        # 兩者一起看比較不會被 ROC-AUC 的樂觀假象誤導。
-        "PR-AUC":
-            average_precision_score(
-                y_true,
-                y_prob
-            )
+        "Accuracy": accuracy_score(y_true, y_pred),
+        "BalancedAccuracy": balanced_accuracy_score(y_true, y_pred),
+        "Precision": precision_score(y_true, y_pred, zero_division=0),
+        "Recall": recall_score(y_true, y_pred, zero_division=0),
+        "Specificity": specificity,
+        "F1": f1_score(y_true, y_pred, zero_division=0),
+        "ROC-AUC": roc_auc_score(y_true, y_prob),
+        "PR-AUC": average_precision_score(y_true, y_prob),
+        "TP": int(tp),
+        "TN": int(tn),
+        "FP": int(fp),
+        "FN": int(fn),
     }
 
 
+def _parse_variant(dataset_dir_name: str) -> str:
+    if dataset_dir_name.endswith("_sensitivity_conventional"):
+        return "sensitivity_conventional"
+    if dataset_dir_name.endswith("_primary"):
+        return "primary"
+    # Keep unknown variants distinct rather than silently mixing them.
+    m = re.search(r"_(primary|sensitivity_conventional)$", dataset_dir_name)
+    if m:
+        return m.group(1)
+    return dataset_dir_name
 
-def aggregate_model_metrics(
-    results_dir,
-    output_path
-):
+
+def _parse_prediction_path(file: str, results_dir: str):
+    """Return dataset dir, variant, feature set, model, fold from a prediction file."""
+    rel = Path(os.path.relpath(file, results_dir))
+    parts = rel.parts
+    if len(parts) < 5 or parts[-1] != "predictions.csv":
+        raise ValueError(f"Unexpected prediction path: {file}")
+
+    dataset_dir_name = parts[-5]
+    feature_set_name = parts[-4]
+    model_name = parts[-3]
+    fold_name = parts[-2]
+    variant = _parse_variant(dataset_dir_name)
+    return dataset_dir_name, variant, feature_set_name, model_name, fold_name
 
 
-    # create output directory
-    os.makedirs(
-        os.path.dirname(output_path),
-        exist_ok=True
+def aggregate_model_metrics(results_dir="results", output_path="results/comparison/metrics_summary.csv"):
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    prediction_files = sorted(
+        glob.glob(os.path.join(results_dir, "**", "fold*", "predictions.csv"), recursive=True)
     )
+    if not prediction_files:
+        raise ValueError(f"No prediction files found under: {results_dir}")
 
     records = []
-
-    prediction_files = glob.glob(
-        os.path.join(
-            results_dir,
-            "**",
-            "predictions.csv"
-        ),
-        recursive=True
-    )
-
-    print("\n[DEBUG] prediction files - aggregate_metrics.py:89")
-
-    for f in prediction_files:
-        print(f)
-
-    print(
-        f"Found {len(prediction_files)} files"
-    )
-
-
     for file in prediction_files:
-
-        # 目錄結構：results_dir/dataset_name/FeatureSet/model_name/foldN/predictions.csv
-        fold_dir = os.path.dirname(file)
-        model_dir = os.path.dirname(fold_dir)
-        feature_set_dir = os.path.dirname(model_dir)
-
-        model_name = os.path.basename(model_dir)
-        feature_set_name = os.path.basename(feature_set_dir)
-        fold_name = os.path.basename(fold_dir)
-
-
+        dataset_name, variant, feature_set, model, fold = _parse_prediction_path(file, results_dir)
         df = pd.read_csv(file)
+        required = {"y_true", "y_prob", "y_pred"}
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(f"{file} missing columns: {sorted(missing)}")
 
-
-        metrics = calculate_metrics(
-            df["y_true"],
-            df["y_prob"],
-            df["y_pred"]
-        )
-
-
-        metrics["FeatureSet"] = feature_set_name
-        metrics["Model"] = model_name
-        metrics["Fold"] = fold_name
-
-
-        records.append(metrics)
-
-
-
-    result = pd.DataFrame(records)
-    print(result)
-
-    if result.empty:
-        raise ValueError(
-            "No prediction files found. Check results directory."
-        )
-
-    # ==========================
-    # fold result
-    # ==========================
-    fold_output = output_path.replace(
-    ".csv",
-    "_folds.csv"
-)
-
-    result.to_csv(
-        fold_output,
-        index=False
-    )
-
-
-    # ==========================
-    # mean ± std
-    # ==========================
-
-    summary = (
-        result
-        .groupby(["FeatureSet", "Model"])
-        .agg(
+        metrics = calculate_metrics(df["y_true"], df["y_prob"], df["y_pred"])
+        metrics.update(
             {
-                "Accuracy":["mean","std"],
-                "BalancedAccuracy":["mean","std"],
-                "Precision":["mean","std"],
-                "Recall":["mean","std"],
-                "F1":["mean","std"],
-                "ROC-AUC":["mean","std"],
-                "PR-AUC":["mean","std"]
+                "DatasetName": dataset_name,
+                "DatasetVariant": variant,
+                "FeatureSet": feature_set,
+                "Model": model,
+                "Fold": fold,
+                "N": len(df),
+                "PredictionFile": os.path.relpath(file, results_dir),
             }
         )
+        records.append(metrics)
+
+    fold_df = pd.DataFrame(records).sort_values(
+        ["DatasetVariant", "FeatureSet", "Model", "Fold"]
+    )
+
+    fold_output = output_path.replace(".csv", "_folds.csv")
+    fold_df.to_csv(fold_output, index=False)
+
+    metric_cols = [
+        "Accuracy", "BalancedAccuracy", "Precision", "Recall", "Specificity",
+        "F1", "ROC-AUC", "PR-AUC"
+    ]
+    summary = (
+        fold_df.groupby(["DatasetVariant", "FeatureSet", "Model"], as_index=False)
+        .agg({m: ["mean", "std"] for m in metric_cols})
     )
     summary.columns = [
-        f"{metric}_{stat}"
-        for metric, stat in summary.columns
+        c if isinstance(c, str) else "_".join(x for x in c if x)
+        for c in summary.columns
     ]
+    # pandas may represent grouping cols as tuples after multi-agg.
+    summary.columns = [
+        "_".join(x for x in c if x) if isinstance(c, tuple) else c
+        for c in summary.columns
+    ]
+    # Clean accidental trailing underscores in group columns.
+    summary = summary.rename(columns={
+        "DatasetVariant_": "DatasetVariant",
+        "FeatureSet_": "FeatureSet",
+        "Model_": "Model",
+    })
+    summary.to_csv(output_path, index=False)
 
-    summary = summary.reset_index()
+    # Convenience per-variant tables.
+    stem, ext = os.path.splitext(output_path)
+    for variant, sub in summary.groupby("DatasetVariant", sort=False):
+        sub.to_csv(f"{stem}_{variant}{ext}", index=False)
 
-    summary.to_csv(
-        output_path
-    )
-
-
-    print(
-        "[DONE] Metrics aggregation finished"
-    )
+    print(f"[DONE] Variant-aware metrics aggregation: {len(fold_df)} folds")
+    print(f"[SAVED] {fold_output}")
+    print(f"[SAVED] {output_path}")
+    print("\nFold counts by variant / feature set / model:")
+    print(fold_df.groupby(["DatasetVariant", "FeatureSet", "Model"]).size().to_string())
+    return summary, fold_df
 
 
 if __name__ == "__main__":
-
-
-    aggregate_model_metrics(
-        results_dir="results",
-        output_path=
-        "results/comparison/metrics_summary.csv"
-    )
+    aggregate_model_metrics()

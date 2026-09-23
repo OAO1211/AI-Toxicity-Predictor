@@ -6,7 +6,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 
-def smiles_to_ecfp(smiles, radius=3, n_bits=1024):
+def smiles_to_ecfp(smiles, radius=3, n_bits=1024, use_chirality=False):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
@@ -15,7 +15,8 @@ def smiles_to_ecfp(smiles, radius=3, n_bits=1024):
         mol,
         radius=radius,
         nBits=n_bits,
-        useFeatures=False
+        useFeatures=False,
+        useChirality=use_chirality
     )
     return np.array(fp, dtype=int)
 
@@ -27,7 +28,8 @@ def extract_ecfp_features(
     label_col="label",
     name_col="CompoundName",
     radius=3,
-    n_bits=1024
+    n_bits=1024,
+    use_chirality=False
 ):
     df = pd.read_csv(input_path, sep=',', encoding='latin1')
 
@@ -36,7 +38,9 @@ def extract_ecfp_features(
 
     for _, row in df.iterrows():
         smiles = row[smiles_col]
-        fp = smiles_to_ecfp(smiles, radius, n_bits)
+        fp = smiles_to_ecfp(
+            smiles, radius, n_bits, use_chirality=use_chirality
+        )
 
         if fp is None:
             failed.append(row.get(name_col, "UNKNOWN"))
@@ -54,10 +58,10 @@ def extract_ecfp_features(
     feature_df = pd.DataFrame(records)
     feature_df.to_csv(output_path, sep="\t", index=False)
 
-    print(f"[✓] ECFP features saved to {output_path} - ecfp.py:57")
-    print(f"[✓] Shape: {feature_df.shape} - ecfp.py:58")
+    print(f"[✓] ECFP features saved to {output_path} - ecfp.py:61")
+    print(f"[✓] Shape: {feature_df.shape} - ecfp.py:62")
 
     if failed:
-        print(f"[WARN] {len(failed)} SMILES failed ECFP generation - ecfp.py:61")
+        print(f"[WARN] {len(failed)} SMILES failed ECFP generation - ecfp.py:65")
 
     return feature_df

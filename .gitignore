@@ -60,3 +60,7 @@ data/features/*
 # !data/raw/.gitkeep
 # Editor config (personal, shouldn't be shared)
 .vscode/
+results/
+*.zip
+__pycache__/
+*.pyc

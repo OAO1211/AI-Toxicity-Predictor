@@ -3,7 +3,6 @@
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 # training_shap.tsv / testing_shap.tsv 裡，這幾欄是 metadata，不是特徵
 NON_FEATURE_COLS = {"SampleID", "baseline_value", "prediction_prob"}
@@ -23,13 +22,12 @@ def plot_mean_abs_shap(mean_shap_path, output_dir="results/plots", top_n=20):
 
     df_sorted = df.sort_values(by=shap_col, ascending=False).head(top_n)
 
+    # Use plain matplotlib rather than seaborn here. Recent seaborn /
+    # matplotlib combinations can raise an Invalid RGBA error when a
+    # palette is supplied without an explicit hue.
     plt.figure(figsize=(8, 6))
-    sns.barplot(
-        x=shap_col,
-        y=feature_col,
-        data=df_sorted,
-        palette="viridis"
-    )
+    plot_df = df_sorted.sort_values(by=shap_col, ascending=True)
+    plt.barh(plot_df[feature_col], plot_df[shap_col])
     plt.title(f"Top {top_n} Mean |SHAP| Features")
     plt.xlabel("Mean |SHAP|")
     plt.ylabel("Feature")
@@ -38,7 +36,7 @@ def plot_mean_abs_shap(mean_shap_path, output_dir="results/plots", top_n=20):
     out_file = os.path.join(output_dir, f"top{top_n}_mean_abs_shap.png")
     plt.savefig(out_file, dpi=300)
     plt.close()
-    print(f"[✓] SHAP bar plot saved to {out_file} - plot_shap.py:41")
+    print(f"[✓] SHAP bar plot saved to {out_file} - plot_shap.py:39")
 
 
 def plot_shap_summary(shap_df_path, output_dir="results/plots", top_n=20):
@@ -77,7 +75,7 @@ def plot_shap_summary(shap_df_path, output_dir="results/plots", top_n=20):
     out_file = os.path.join(output_dir, f"shap_summary_top{top_n}.png")
     plt.savefig(out_file, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"[✓] SHAP summary plot saved to {out_file} - plot_shap.py:80")
+    print(f"[✓] SHAP summary plot saved to {out_file} - plot_shap.py:78")
 
 
 if __name__ == "__main__":

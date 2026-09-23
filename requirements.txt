@@ -24,5 +24,8 @@ seaborn>=0.12.2
 # Optional: 儲存圖片 / PNG
 pillow>=10.0.0
 
+# .xlsx output (error_analysis_summary.xlsx / property_group_comparison.xlsx)
+openpyxl>=3.1.0
+
 # Pipeline / utility
 joblib>=1.3.0

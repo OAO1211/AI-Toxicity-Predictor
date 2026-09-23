@@ -71,6 +71,7 @@ Two independent feature representations are extracted from SMILES, evaluated sep
 Default configuration:
 ECFP radius = 3
 ECFP bits = 1024
+ECFP chirality = enabled (final v4)
 
 **2. Physicochemical Descriptors (baseline)**
 - 15 classic RDKit-computed descriptors: MolWt, ExactMolWt, MolLogP, TPSA, HBD, HBA, RotatableBonds, RingCount, AromaticRings, AliphaticRings, HeavyAtoms, FractionCSP3, MolMR, LabuteASA, BertzCT
@@ -88,9 +89,13 @@ ECFP bits = 1024
 
 ---
 
-## Sample consistency across feature sets
+## Final dataset preparation and structure QC
 
-Before feature extraction, all SMILES strings are validated once with RDKit (`preprocess/clean_data.py`'s `filter_valid_smiles`), and any row that fails to parse is dropped from a shared, cleaned copy of the dataset. ECFP, Descriptors, and Combined are all extracted from this same cleaned dataset, so all four feature sets are guaranteed to be evaluated on an identical set of compounds — comparisons between feature sets are not confounded by different molecules silently being dropped by one representation but not another.
+Before a formal v4 run, `preprocess/prepare_final_dataset.py` freezes the DILIrank-derived analysis cohort. Binary labels are regenerated directly from `vDILIConcern` (`vMost-DILI-Concern -> 1`, `vNo-DILI-Concern -> 0`) so legacy manual-label errors cannot propagate into model training. The source DILIrank SMILES are preserved as the model input; RDKit parsing, canonical-isomeric-SMILES duplicate QC, fragment count, metal flag, and molecular-weight flags are recorded separately.
+
+The primary cohort is not subjected to blind salt stripping, largest-fragment selection, charge neutralization, or parent replacement. Those operations can collapse pharmacologically distinct products and are therefore treated as representation limitations rather than silently changing the source structures.
+
+The preparer also writes an exploratory sensitivity subset defined *a priori* as single-component, metal-free, and molecular weight <=1000 Da. This sensitivity set is used to test robustness and does not replace the primary 450-compound cohort.
 
 ---
 
@@ -191,12 +196,13 @@ dili_ml_project/
 
 # Dataset
 
-Input datasets should contain:
+The final project dataset is derived from DILIrank 1.0 and keeps only the verified extreme categories with source structure availability. The raw project CSV should contain:
 
 | Column | Description |
 |---|---|
-| SMILES | Molecular representation |
-| label | Binary toxicity label |
+| SMILES | Source DILIrank molecular representation |
+| vDILIConcern | Source category (`vMost-DILI-Concern` / `vNo-DILI-Concern`) |
+| label | Legacy label column; overwritten during final preparation |
 | LabelCompoundName | Compound name |
 
 Example:
@@ -233,11 +239,25 @@ conda install -c conda-forge rdkit
 
 ## Usage
 
-Run the complete pipeline:
+Quick smoke test of the final primary workflow:
 
 ```bash
-python run_pipeline.py
+python run_pipeline.py --quick --feature-sets ECFP --models LogReg --dataset-variant primary
 ```
+
+Run the complete formal primary pipeline:
+
+```bash
+python run_pipeline.py --dataset-variant primary
+```
+
+Run a separate sensitivity analysis on the conventional-structure subset:
+
+```bash
+python run_pipeline.py --dataset-variant sensitivity --feature-sets ECFP --models RF,XGB,LogReg
+```
+
+Use `--dataset-variant both` only when you intentionally want both cohorts in the same invocation.
 
 The pipeline will automatically perform:
 - Molecular fingerprint / descriptor generation

@@ -1,7 +1,67 @@
 # preprocess/scaling.py
 
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import StandardScaler
+
+
+class DescriptorOnlyScaler(BaseEstimator, TransformerMixin):
+    """
+    sklearn-compatible transformer that only standardizes columns whose
+    name does NOT start with "ECFP_" (i.e. the physicochemical
+    descriptors), leaving the 0/1 ECFP bits untouched.
+
+    This is what model_selection.grid_search.make_scaled_builder /
+    Pipeline([("scaler", DescriptorOnlyScaler()), ("clf", model)])
+    expects to import. It was referenced but never defined here before,
+    which made `import model_selection.grid_search` (and therefore
+    `import config`) fail with ImportError before any pipeline code
+    could run at all — fixed by adding the class back.
+
+    fit() only ever sees the training fold (GridSearchCV clones a fresh,
+    unfit copy of this transformer for every inner fold), so there is no
+    leakage of validation-fold statistics into the scaler.
+    """
+
+    def __init__(self):
+        self.descriptor_cols_ = None
+        self.ecfp_cols_ = None
+        self.scaler_ = None
+        self.columns_ = None
+
+    def fit(self, X, y=None):
+        X = pd.DataFrame(X)
+        self.columns_ = list(X.columns)
+        self.descriptor_cols_ = [
+            c for c in self.columns_ if not str(c).startswith("ECFP_")
+        ]
+        self.ecfp_cols_ = [
+            c for c in self.columns_ if str(c).startswith("ECFP_")
+        ]
+
+        self.scaler_ = StandardScaler()
+        if self.descriptor_cols_:
+            self.scaler_.fit(X[self.descriptor_cols_])
+        return self
+
+    def transform(self, X):
+        X = pd.DataFrame(X, columns=self.columns_)
+
+        if self.descriptor_cols_:
+            desc_scaled = pd.DataFrame(
+                self.scaler_.transform(X[self.descriptor_cols_]),
+                columns=self.descriptor_cols_,
+                index=X.index
+            )
+        else:
+            desc_scaled = X[self.descriptor_cols_]
+
+        out = pd.concat(
+            [X[self.ecfp_cols_], desc_scaled],
+            axis=1
+        )[self.columns_]
+
+        return out
 
 
 def make_descriptor_scaler_transform(feature_columns):

@@ -24,7 +24,9 @@ def run_5fold_cv(
     y,
     output_dir,
     model_name,
-    model_type="rf"
+    model_type="rf",
+    feature_transform_fn=None,
+    feature_set_name=None
 ):
     """
     builder: 呼叫方式為 builder(**best_params) -> sklearn/xgboost estimator
@@ -32,19 +34,23 @@ def run_5fold_cv(
              見 model_selection.grid_search.make_scaled_builder）
     grid_search_fn: 呼叫方式為 grid_search_fn(X_train, y_train) -> (best_params, best_score)
 
-    重要：grid_search_fn 在每個 outer fold 內部才會被呼叫，
-    且只會看到該 fold 的訓練資料 (X_train, y_train)。
-    這是為了避免「先在全部資料上做 grid search，再用同一份資料做 CV 評估」
-    所造成的資訊洩漏（outer test fold 間接影響了超參數選擇），
-    也就是正確做法的 nested cross-validation。
+    feature_transform_fn: 選填。呼叫方式為
+        feature_transform_fn(X_train, X_test) -> (X_train_out, X_test_out)
+        在每個 outer fold 內部、grid search 之前呼叫，用來做「只能用該
+        fold 訓練資料 fit」的前處理（目前是 preprocess.scaling.
+        make_descriptor_scaler_transform，用於 Combined_Scaled）。
+        （之前這裡漏掉了這個參數，但 run_pipeline.py 已經在傳，會直接
+        造成 TypeError；現在補上，行為符合原本的設計意圖。）
 
-    如果這個 (feature set, model) 組合需要對 descriptors 做 scaling
-    （目前只有 Descriptors/Combined_Scaled 的 LogReg），scaling 本身
-    是包在 builder/grid_search_fn 內部的 sklearn Pipeline 裡處理，
-    讓 GridSearchCV 在每一個 inner fold 都重新 fit scaler，不會有
-    inner validation fold 的分布資訊外洩——比起「在 outer fold 開始
-    時就先 fit 好 scaler、整個 inner CV 共用同一份 scaler」更嚴格。
+    feature_set_name: 選填，用來標記輸出的 OOF prediction 屬於哪個
+        feature set（ECFP / Descriptors / Combined_Naive / Combined_Scaled）。
+        沒有提供的話，退回用 output_dir 的資料夾名稱推斷。
     """
+
+    if feature_set_name is None:
+        feature_set_name = os.path.basename(
+            os.path.normpath(output_dir)
+        )
 
     skf = StratifiedKFold(
         n_splits=5,
@@ -54,6 +60,16 @@ def run_5fold_cv(
 
     mean_shap_list = []
 
+    # Out-of-fold predictions across all 5 folds. Every sample lands in
+    # exactly one outer test fold, so concatenating all folds' test
+    # predictions gives one true OOF prediction per compound (item 8).
+    oof_rows = []
+
+    # Out-of-fold SHAP values (test_shap of every fold, concatenated).
+    # Used both by the existing "top SHAP fragments" step and by the new
+    # per-error-compound fragment extraction, so that neither is based
+    # on fold1 alone (item 7).
+    oof_shap_frames = []
 
     # ==================================================
     # 5 Fold Cross Validation
@@ -82,6 +98,21 @@ def run_5fold_cv(
         train_ids = np.array(ids)[train_idx]
         test_ids = np.array(ids)[test_idx]
 
+        # -------------------------
+        # Fold-local feature transform (e.g. descriptor scaling)
+        # -------------------------
+        #
+        # Must run before grid search AND before the final fit below,
+        # and must only ever be fit on X_train of this fold — the
+        # closure returned by make_descriptor_scaler_transform enforces
+        # that by fitting a fresh StandardScaler inside itself every
+        # time it's called.
+
+        if feature_transform_fn is not None:
+            X_train, X_test = feature_transform_fn(
+                X_train,
+                X_test
+            )
 
         # -------------------------
         # Fold output directory
@@ -242,6 +273,14 @@ def run_5fold_cv(
             out_path=testing_shap_path
         )
 
+        # Re-read what was just written (rather than re-deriving the
+        # DataFrame shape from scratch) so the OOF SHAP table is
+        # guaranteed to have exactly the same columns/format as the
+        # per-fold testing_shap.tsv files.
+        fold_test_shap_df = pd.read_csv(testing_shap_path, sep="\t")
+        fold_test_shap_df.insert(1, "fold", fold)
+        oof_shap_frames.append(fold_test_shap_df)
+
         # =====================
         # Save predictions
         # =====================
@@ -262,6 +301,28 @@ def run_5fold_cv(
             ),
             index=False
         )
+
+        # -------------------------
+        # Accumulate OOF predictions (item 1 / item 8)
+        # -------------------------
+        #
+        # Same information as prediction_df above, but with the column
+        # names/shape needed for error_analysis.py, and collected across
+        # all 5 folds so every compound ends up with exactly one true
+        # out-of-fold prediction.
+
+        oof_rows.append(
+            pd.DataFrame({
+                "SampleID": test_ids,
+                "y_true": y_test.values,
+                "pred_prob": pred_test,
+                "pred_label": pred_label,
+                "fold": fold,
+                "model": model_name,
+                "feature_set": feature_set_name
+            })
+        )
+
         # ==================================================
         # Generate fold visualization
         # ==================================================
@@ -332,6 +393,59 @@ def run_5fold_cv(
     plot_mean_abs_shap(
         mean_shap_path=mean_shap_path,
         output_dir=model_output_dir
+    )
+
+    # ==================================================
+    # Save out-of-fold predictions (item 1 / item 8)
+    # ==================================================
+
+    oof_df = pd.concat(oof_rows, axis=0, ignore_index=True)
+
+    n_unique_ids = oof_df["SampleID"].nunique()
+    if n_unique_ids != len(oof_df):
+        print(
+            f"[WARN] {model_name}/{feature_set_name}: OOF predictions "
+            f"have {len(oof_df)} rows but only {n_unique_ids} unique "
+            f"SampleID — some compound appears in more than one outer "
+            f"test fold, which should not happen with StratifiedKFold."
+        )
+
+    oof_path = os.path.join(
+        model_output_dir,
+        "oof_predictions.tsv"
+    )
+
+    oof_df.to_csv(
+        oof_path,
+        sep="\t",
+        index=False
+    )
+
+    print(
+        f"[INFO] {model_name}/{feature_set_name}: saved "
+        f"{len(oof_df)} out-of-fold predictions to {oof_path}"
+    )
+
+    # ==================================================
+    # Save out-of-fold SHAP table (item 7)
+    # ==================================================
+
+    oof_shap_df = pd.concat(oof_shap_frames, axis=0, ignore_index=True)
+
+    oof_shap_path = os.path.join(
+        model_output_dir,
+        "oof_shap.tsv"
+    )
+
+    oof_shap_df.to_csv(
+        oof_shap_path,
+        sep="\t",
+        index=False
+    )
+
+    print(
+        f"[INFO] {model_name}/{feature_set_name}: saved OOF SHAP table "
+        f"({len(oof_shap_df)} rows, all 5 folds) to {oof_shap_path}"
     )
 
 

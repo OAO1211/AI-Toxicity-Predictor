@@ -4,7 +4,53 @@ from rdkit import Chem
 from rdkit.Chem import AllChem, Draw
 import os
 import pandas as pd
-def bit_to_fragment(smiles: str, bit_indices: List[int], radius: int = 3, n_bits: int = 1024) -> Dict[int, Chem.Mol]:
+def get_present_bits(
+    smiles: str,
+    radius: int = 3,
+    n_bits: int = 1024,
+    use_chirality: bool = False
+) -> set:
+    """
+    Returns the set of ECFP bit indices that are actually SET (present)
+    for this molecule — i.e. the keys of the Morgan fingerprint's
+    bitInfo dict.
+
+    This matters for per-compound SHAP interpretation: a binary
+    ECFP feature can carry a non-zero SHAP value for a molecule even
+    when that bit is 0 for that molecule (SHAP explains the deviation
+    caused by the feature taking value 0 vs its background
+    distribution, not just contributions from features equal to 1).
+    That's a legitimate SHAP attribution, but a bit that's absent for
+    this molecule has no atom environment / substructure to reconstruct
+    ON THIS MOLECULE — bit_to_fragment() would already return None for
+    it — so callers that want to report "structural fragments actually
+    present in this molecule" should filter their candidate bit set to
+    get_present_bits(...) BEFORE ranking by SHAP, not after (ranking
+    first can pick an absent bit as "top", which then just produces an
+    uninterpretable None fragment instead of a same-ranked bit that
+    IS present and resolvable).
+    """
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return set()
+
+    info = {}
+    AllChem.GetMorganFingerprintAsBitVect(
+        mol, radius=radius, nBits=n_bits, bitInfo=info,
+        useChirality=use_chirality
+    )
+
+    return set(info.keys())
+
+
+def bit_to_fragment(
+    smiles: str,
+    bit_indices: List[int],
+    radius: int = 3,
+    n_bits: int = 1024,
+    use_chirality: bool = False
+) -> Dict[int, Chem.Mol]:
     """
     將指定 bit_indices 的 ECFP bits 還原為 substructure fragment
 
@@ -22,7 +68,8 @@ def bit_to_fragment(smiles: str, bit_indices: List[int], radius: int = 3, n_bits
 
     info = {}
     fp = AllChem.GetMorganFingerprintAsBitVect(
-        mol, radius=radius, nBits=n_bits, bitInfo=info
+        mol, radius=radius, nBits=n_bits, bitInfo=info,
+        useChirality=use_chirality
     )
 
     fragments = {}
@@ -65,7 +112,8 @@ def extract_top_shap_fragments(
     top_n: int = 20,
     output_dir: str = "fragments",
     radius: int = 3,
-    n_bits: int = 1024
+    n_bits: int = 1024,
+    use_chirality: bool = False
 ):
     """
     從 SHAP 結果提取 top N bits，還原 fragment 並存圖 + CSV
@@ -89,7 +137,7 @@ def extract_top_shap_fragments(
     top_bits = mean_abs_shap.sort_values(ascending=False).head(top_n).index
     top_bit_indices = [int(b.replace("ECFP_", "")) for b in top_bits]
 
-    print(f"[INFO] Top {top_n} SHAP bits: {top_bit_indices} - bit_mapping.py:92")
+    print(f"[INFO] Top {top_n} SHAP bits: {top_bit_indices} - bit_mapping.py:140")
 
     # bit -> fragment
     all_fragments = []
@@ -100,7 +148,10 @@ def extract_top_shap_fragments(
     for idx, row in dataset_df.iterrows():
         smiles = row["SMILES"]
         name = row.get("CompoundName", f"sample_{idx}")
-        frags = bit_to_fragment(smiles, top_bit_indices, radius=radius, n_bits=n_bits)
+        frags = bit_to_fragment(
+            smiles, top_bit_indices, radius=radius, n_bits=n_bits,
+            use_chirality=use_chirality
+        )
         for bit, mol in frags.items():
             fragment_smiles = Chem.MolToSmiles(mol) if mol else None
             if fragment_smiles is not None:
@@ -143,5 +194,5 @@ def extract_top_shap_fragments(
     os.makedirs(output_dir, exist_ok=True)
     frag_df.to_csv(os.path.join(output_dir, "top_shap_fragments.tsv"), sep='\t', index=False)
 
-    print(f"[✓] Fragments saved to {output_dir}/top_shap_fragments.tsv - bit_mapping.py:146")
-    print(f"[✓] Fragment images saved to {output_dir}/pngs/ - bit_mapping.py:147")
+    print(f"[✓] Fragments saved to {output_dir}/top_shap_fragments.tsv - bit_mapping.py:197")
+    print(f"[✓] Fragment images saved to {output_dir}/pngs/ - bit_mapping.py:198")
